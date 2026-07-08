@@ -5,29 +5,17 @@
 # load-balances across the control-plane nodes' apiservers with health-checked
 # failover.
 #
-# Minimal backend: only address + healthCheck.type/path are required. All other
-# healthCheck fields have defaults (interval 3s, timeout 1s, insecureSkipVerify
-# true, failureThreshold 2, successThreshold 1).
+# Minimal backend: only address is required. healthCheck has defaults:
+#   type http, path /readyz, insecureSkipVerify true, interval 3s, timeout 1s,
+#   failureThreshold 2, successThreshold 1.
+# So the shortest form is `address` alone — healthCheck can be omitted entirely.
 
 listen: 127.0.0.1:16443          # local listen address (controlPlaneEndpoint maps here)
 status: 127.0.0.1:16444          # status endpoint, localhost-only
 
 backends:                        # apiserver pool (each control-plane node's IP:6443)
   - address: 192.168.100.20:6443
-    healthCheck:
-      type: http                 # http (default) probes /readyz over HTTPS | tcp dials the port
-      path: /readyz
   - address: 192.168.100.21:6443
-    healthCheck:
-      type: http
-      path: /readyz
-# All defaults omitted above. To override any:
-#   - address: 192.168.100.22:6443
-#     healthCheck:
-#       type: http
-#       path: /readyz
-#       insecureSkipVerify: false # default true; set false only if backend TLS is system-trusted
-#       interval: 5s
-#       timeout: 1s
-#       failureThreshold: 3
-#       successThreshold: 1
+    healthCheck: { type: http, path: /readyz }
+  - address: 192.168.100.22:6443
+    healthCheck: { type: http, path: /readyz, insecureSkipVerify: false, interval: 5s }

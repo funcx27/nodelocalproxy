@@ -75,8 +75,8 @@ func TestProxyFailover(t *testing.T) {
 		listen:      ln.Addr().String(),
 		dialTimeout: 500 * time.Millisecond,
 		backends: []Backend{
-			{Address: deadAddr, HealthCheck: HealthCheck{Type: "tcp"}},
-			{Address: echoAddr, HealthCheck: HealthCheck{Type: "tcp"}},
+			{Address: deadAddr, HealthCheck: &HealthCheck{Type: "tcp"}},
+			{Address: echoAddr, HealthCheck: &HealthCheck{Type: "tcp"}},
 		},
 		pool: newPool(2),
 		log:  quietLogger(),
@@ -131,7 +131,7 @@ func TestProxyAllDown(t *testing.T) {
 	pr := &proxy{
 		listen:      ln.Addr().String(),
 		dialTimeout: 300 * time.Millisecond,
-		backends:    []Backend{{Address: deadAddr, HealthCheck: HealthCheck{Type: "tcp"}}},
+		backends:    []Backend{{Address: deadAddr, HealthCheck: &HealthCheck{Type: "tcp"}}},
 		pool:        newPool(1),
 		log:         quietLogger(),
 	}
@@ -179,8 +179,8 @@ func TestHealthCheckHTTP(t *testing.T) {
 	defer badSrv.Close()
 
 	backends := []Backend{
-		{Address: stripHost(okSrv.Listener.Addr().String()), HealthCheck: HealthCheck{Type: "http", Path: "/readyz", Interval: 50 * time.Millisecond, Timeout: time.Second, FailureThreshold: 1, SuccessThreshold: 1}},
-		{Address: stripHost(badSrv.Listener.Addr().String()), HealthCheck: HealthCheck{Type: "http", Path: "/readyz", Interval: 50 * time.Millisecond, Timeout: time.Second, FailureThreshold: 1, SuccessThreshold: 1}},
+		{Address: stripHost(okSrv.Listener.Addr().String()), HealthCheck: &HealthCheck{Type: "http", Path: "/readyz", Interval: 50 * time.Millisecond, Timeout: time.Second, FailureThreshold: 1, SuccessThreshold: 1}},
+		{Address: stripHost(badSrv.Listener.Addr().String()), HealthCheck: &HealthCheck{Type: "http", Path: "/readyz", Interval: 50 * time.Millisecond, Timeout: time.Second, FailureThreshold: 1, SuccessThreshold: 1}},
 	}
 	p := newPool(2)
 	log := quietLogger()
