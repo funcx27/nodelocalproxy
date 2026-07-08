@@ -5,10 +5,8 @@
 # load-balances across the control-plane nodes' apiservers with health-checked
 # failover.
 #
-# healthCheck applies to every backend uniformly. Omit it to use the embedded
-# defaults (http /readyz, insecureSkipVerify true, 3s/1s, thresholds 2/1); when
-# set, it replaces the defaults entirely so every field must be specified. To
-# front services needing different probe settings, run multiple proxy instances.
+# Omitted fields inherit embedded defaults. To front services needing different
+# probe settings, run multiple proxy instances.
 
 # Minimal config: backends only, healthCheck inherited from embedded defaults.
 listen: 127.0.0.1:16443          # local listen address (controlPlaneEndpoint maps here)
@@ -18,7 +16,7 @@ backends:                        # apiserver pool (each control-plane node's IP:
   - 192.168.100.21:6443
   - 192.168.100.22:6443
 
-# Explicit healthCheck (replaces embedded defaults; every field required):
+# Optional healthCheck overrides; omitted fields keep embedded defaults:
 # healthCheck:
 #   type: tcp                   # http probes path over HTTPS | tcp dials the port
 #   path: /readyz               # http probe path

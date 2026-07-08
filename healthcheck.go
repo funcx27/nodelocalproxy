@@ -12,9 +12,6 @@ import (
 	"log/slog"
 )
 
-// checker continuously probes each backend and updates pool health. One goroutine
-// per backend runs the probe on the shared healthCheck interval; the proxy is
-// unavailable only until the first successful (or threshold-failing) probe lands.
 type checker struct {
 	pool     *pool
 	backends []string
@@ -26,7 +23,6 @@ func newChecker(p *pool, backends []string, hc HealthCheck, log *slog.Logger) *c
 	return &checker{pool: p, backends: backends, hc: hc, log: log}
 }
 
-// run starts one probe goroutine per backend and blocks until ctx is cancelled.
 func (c *checker) run(ctx context.Context) {
 	var wg sync.WaitGroup
 	for _, addr := range c.backends {
@@ -43,7 +39,6 @@ func (c *checker) loop(ctx context.Context, addr string) {
 	t := time.NewTicker(c.hc.Interval)
 	defer t.Stop()
 
-	// Probe once immediately so health is known before the first interval elapses.
 	c.probe(ctx, addr)
 	for {
 		select {
@@ -55,10 +50,6 @@ func (c *checker) loop(ctx context.Context, addr string) {
 	}
 }
 
-// probe runs a single check and applies the success/failure thresholds to the
-// pool. A healthy probe must reach successThreshold consecutive times; an
-// unhealthy probe demotes after failureThreshold consecutive times. This gives
-// flap resistance without slow recovery.
 func (c *checker) probe(ctx context.Context, addr string) {
 	hc := c.hc
 	pctx, cancel := context.WithTimeout(ctx, hc.Timeout)
@@ -102,41 +93,52 @@ func (c *checker) probe(ctx context.Context, addr string) {
 	}
 }
 
-// doProbe performs the actual check. "http" issues an HTTPS GET (the kube-apiserver
-// serves /readyz over HTTPS with its cluster CA, hence insecureSkipVerify);
-// "tcp" only dials the port. Any non-2xx HTTP status is treated as failure.
 func (c *checker) doProbe(ctx context.Context, addr string) error {
 	switch c.hc.Type {
 	case "tcp":
-		var d net.Dialer
-		conn, err := d.DialContext(ctx, "tcp", addr)
-		if err != nil {
-			return err
-		}
-		_ = conn.Close()
-		return nil
-	default: // "http"
-		client := &http.Client{
-			Timeout: 0, // governed by ctx
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: c.hc.InsecureSkipVerify, //nolint:gosec // intentional: cluster-internal CA on read-only probe
-				},
-			},
-		}
-		url := fmt.Sprintf("https://%s%s", addr, c.hc.Path)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return err
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("probe %s: HTTP %d", url, resp.StatusCode)
-		}
-		return nil
+		return c.doTCPProbe(ctx, addr)
+	default:
+		return c.doHTTPProbe(ctx, addr)
 	}
+}
+
+func (c *checker) doTCPProbe(ctx context.Context, addr string) error {
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	if err := conn.Close(); err != nil {
+		c.log.Debug("tcp probe close failed", "backend", addr, "err", err)
+	}
+	return nil
+}
+
+func (c *checker) doHTTPProbe(ctx context.Context, addr string) error {
+	client := &http.Client{
+		Timeout: 0, // governed by ctx
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: c.hc.InsecureSkipVerify, //nolint:gosec // cluster-internal read-only probe
+			},
+		},
+	}
+	url := fmt.Sprintf("https://%s%s", addr, c.hc.Path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.log.Debug("probe response body close failed", "backend", addr, "err", err)
+		}
+	}()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("probe %s: HTTP %d", url, resp.StatusCode)
+	}
+	return nil
 }

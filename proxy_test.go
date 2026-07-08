@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -13,13 +14,10 @@ import (
 	"time"
 )
 
-// quietLogger returns a logger that discards output during tests.
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// startEcho starts a TCP server that echoes received bytes back to the client.
-// It returns the listener (so callers can read Addr) and a stop function.
 func startEcho(t *testing.T) (net.Listener, func()) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -36,18 +34,17 @@ func startEcho(t *testing.T) (net.Listener, func()) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer closeTestConn(t, c, "echo client")
 				_, _ = io.Copy(c, c)
 			}(conn)
 		}
 	}()
 	return ln, func() {
-		_ = ln.Close()
+		closeTestConn(t, ln, "echo listener")
 		wg.Wait()
 	}
 }
 
-// markAllHealthy flips every backend in the pool to healthy for a test setup.
 func markAllHealthy(p *pool) {
 	for _, s := range p.states {
 		s.mu.Lock()
@@ -56,29 +53,40 @@ func markAllHealthy(p *pool) {
 	}
 }
 
-// TestProxyFailover sets up two backends; the first is closed so the dial fails,
-// the second is a healthy echo server. The proxy must fail over and the client
-// receives its data echoed back.
+func startProxy(t *testing.T, p *proxy, ln net.Listener) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- p.serve(ctx, ln)
+	}()
+
+	t.Cleanup(func() {
+		cancel()
+		closeTestConn(t, ln, "proxy listener")
+		if err := <-serveErr; err != nil {
+			t.Errorf("proxy serve: %v", err)
+		}
+	})
+}
+
 func TestProxyFailover(t *testing.T) {
-	// Backend 0: closed port → dial fails immediately.
 	deadLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen dead: %v", err)
 	}
 	deadAddr := deadLn.Addr().String()
-	_ = deadLn.Close()
+	closeTestConn(t, deadLn, "dead backend")
 
-	// Backend 1: healthy echo server.
 	echoLn, stopEcho := startEcho(t)
 	defer stopEcho()
 	echoAddr := echoLn.Addr().String()
 
-	// Proxy: listen on an ephemeral port, pool with both backends marked healthy.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("proxy listen: %v", err)
 	}
-	defer ln.Close()
 
 	p := &proxy{
 		listen:      ln.Addr().String(),
@@ -87,20 +95,14 @@ func TestProxyFailover(t *testing.T) {
 		pool:        newPool([]string{deadAddr, echoAddr}),
 		log:         quietLogger(),
 	}
-	// Both backends start healthy so the proxy will try backend 0, fail, and
-	// fail over to backend 1.
 	markAllHealthy(p.pool)
+	startProxy(t, p, ln)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go p.serve(ctx, ln)
-
-	// Client: send and expect echo.
 	conn, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
-	defer conn.Close()
+	defer closeTestConn(t, conn, "proxy client")
 	payload := "hello-failover"
 	if _, err := conn.Write([]byte(payload)); err != nil {
 		t.Fatalf("write: %v", err)
@@ -114,21 +116,18 @@ func TestProxyFailover(t *testing.T) {
 	}
 }
 
-// TestProxyAllDown verifies that when every backend is unreachable the client
-// connection is closed (no healthy backend) rather than hanging.
 func TestProxyAllDown(t *testing.T) {
 	deadLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen dead: %v", err)
 	}
 	deadAddr := deadLn.Addr().String()
-	_ = deadLn.Close()
+	closeTestConn(t, deadLn, "dead backend")
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("proxy listen: %v", err)
 	}
-	defer ln.Close()
 
 	p := &proxy{
 		listen:      ln.Addr().String(),
@@ -138,18 +137,14 @@ func TestProxyAllDown(t *testing.T) {
 		log:         quietLogger(),
 	}
 	markAllHealthy(p.pool)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go p.serve(ctx, ln)
+	startProxy(t, p, ln)
 
 	conn, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
-	defer conn.Close()
+	defer closeTestConn(t, conn, "proxy client")
 
-	// The proxy should close the connection promptly since it cannot connect.
 	done := make(chan struct{})
 	go func() {
 		_, _ = conn.Read(make([]byte, 16))
@@ -157,22 +152,17 @@ func TestProxyAllDown(t *testing.T) {
 	}()
 	select {
 	case <-done:
-		// connection closed by proxy — expected.
 	case <-time.After(3 * time.Second):
 		t.Fatal("proxy hung instead of closing the client connection")
 	}
 }
 
-// TestHealthCheckHTTP verifies the HTTP probe marks a 2xx backend healthy and a
-// 5xx one unhealthy after reaching the failure threshold.
 func TestHealthCheckHTTP(t *testing.T) {
-	// Healthy upstream: 200.
 	okSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer okSrv.Close()
 
-	// Unhealthy upstream: 503.
 	badSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
@@ -196,7 +186,6 @@ func TestHealthCheckHTTP(t *testing.T) {
 	defer cancel()
 	go ch.run(ctx)
 
-	// Wait for probes to settle.
 	deadline := time.Now().Add(1500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		p.states[0].mu.Lock()
@@ -213,11 +202,16 @@ func TestHealthCheckHTTP(t *testing.T) {
 	t.Fatalf("health states did not converge: see logs")
 }
 
-// stripHost maps the httptest IPv6 listener address back to IPv4 loopback, since
-// the backends in tests bind 127.0.0.1. host:port strings are returned as-is.
 func stripHost(addr string) string {
 	if strings.HasPrefix(addr, "[::]:") {
 		return "127.0.0.1:" + strings.TrimPrefix(addr, "[::]:")
 	}
 	return addr
+}
+
+func closeTestConn(t *testing.T, c io.Closer, name string) {
+	t.Helper()
+	if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Errorf("%s close: %v", name, err)
+	}
 }

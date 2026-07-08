@@ -45,15 +45,14 @@ fail `failureThreshold` consecutive checks to become unhealthy — this gives fl
 resistance without slow recovery. Even if the health check is stale, per-request
 `connect()` failure provides a second layer of failover.
 
-When `healthCheck` is omitted, the embedded `defaults.yaml` is used (http
-`/readyz`, `insecureSkipVerify: true`, 3s/1s, thresholds 2/1). When set, it
-**replaces** the defaults entirely (no field-level merge), so every field must be
-specified.
+Embedded defaults are loaded before the user config, so omitted fields keep their
+default values. The default `healthCheck` is http `/readyz`,
+`insecureSkipVerify: true`, 3s/1s, thresholds 2/1.
 
 ## Config
 
 See [`example-config.yaml`](example-config.yaml). Backends are bare address
-strings; `healthCheck` is optional (embedded defaults) or a complete block.
+strings; `backendConnectTimeout` controls per-request backend connect failover.
 
 ## Build
 
@@ -61,6 +60,45 @@ Pure Go, statically linked (zero glibc dependency):
 
 ```sh
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nodelocalproxy .
+```
+
+Container image:
+
+```sh
+make builder
+make docker-build IMAGE=nodelocalproxy:dev
+```
+
+Multi-arch image:
+
+```sh
+make builder
+make docker-push IMAGE=your-registry/nodelocalproxy:dev
+```
+
+Behind an HTTP proxy:
+
+```sh
+make builder PROXY=http://127.0.0.1:10808
+make docker-push IMAGE=your-registry/nodelocalproxy:dev PROXY=http://127.0.0.1:10808
+```
+
+GitHub Actions publishes multi-arch images to GHCR:
+
+```sh
+ghcr.io/funcx27/nodelocalproxy
+```
+
+Version tags:
+
+- Git tag `v0.1.0`: `v0.1.0`, `latest`
+- Pull requests: build only, no push
+
+Release a version:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 Run:

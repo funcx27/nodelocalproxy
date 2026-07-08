@@ -11,31 +11,16 @@ import (
 	"log/slog"
 )
 
-// proxy accepts connections on the listen address and forwards each one to a
-// healthy backend. Backend selection is round-robin over the healthy set; a
-// connect() failure triggers per-request failover to the next healthy backend,
-// so a backend can fail and recover within a single health-check interval
-// without dropping the request.
 type proxy struct {
 	listen   string
 	backends []string
 	pool     *pool
 	log      *slog.Logger
 
-	// dialTimeout bounds the connect attempt to each backend. If the upstream is
-	// down the proxy must move on quickly rather than hold the client connection
-	// open until the kernel TCP timeout.
+	// dialTimeout avoids waiting for the kernel TCP timeout before failover.
 	dialTimeout time.Duration
 }
 
-const defaultDialTimeout = 2 * time.Second
-
-// errNoHealthyBackend means every backend is currently unhealthy. The connection
-// is rejected so the client sees a clear failure rather than an indefinite hang.
-var errNoHealthyBackend = errors.New("no healthy backend available")
-
-// serve accepts and handles connections until the listener is closed. It blocks
-// for the lifetime of the proxy.
 func (p *proxy) serve(ctx context.Context, ln net.Listener) error {
 	for {
 		conn, err := ln.Accept()
@@ -49,11 +34,8 @@ func (p *proxy) serve(ctx context.Context, ln net.Listener) error {
 	}
 }
 
-// handle forwards one client connection. It selects backends in round-robin
-// order, skipping any that fail to connect, so a down backend is tolerated
-// without surfacing an error to the client as long as one backend connects.
 func (p *proxy) handle(ctx context.Context, client net.Conn) {
-	defer client.Close()
+	defer p.closeConn(client, "client")
 	addr := client.RemoteAddr().String()
 
 	for attempt := 0; attempt < len(p.backends); attempt++ {
@@ -74,15 +56,13 @@ func (p *proxy) handle(ctx context.Context, client net.Conn) {
 
 		p.pool.markResult(idx, true, nil)
 		p.log.Debug("connected", "backend", b, "client", addr)
+		defer p.closeConn(upstream, "upstream")
 		p.relay(client, upstream)
 		return
 	}
 	p.log.Warn("all backends failed to connect", "client", addr)
 }
 
-// relay copies bytes bidirectionally and waits for both directions to finish
-// before returning. The connection is half-closed cleanly when either side
-// finishes sending; both goroutines closing is what allows handle to return.
 func (p *proxy) relay(a, b net.Conn) {
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -100,19 +80,19 @@ func (p *proxy) relay(a, b net.Conn) {
 }
 
 func isClosed(err error) bool {
-	var ne net.Error
-	if errors.As(err, &ne) {
-		return false
-	}
 	return errors.Is(err, net.ErrClosed)
 }
 
-// closeWrite signals EOF to the peer on the write half. TCPConn implements it;
-// we fall back to a full Close for non-TCP transports where half-close is not
-// supported, which still terminates the relay correctly.
+// closeWrite falls back to Close for transports without TCP half-close support.
 func closeWrite(c net.Conn) error {
 	if tc, ok := c.(*net.TCPConn); ok {
 		return tc.CloseWrite()
 	}
 	return c.Close()
+}
+
+func (p *proxy) closeConn(c net.Conn, side string) {
+	if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		p.log.Debug("connection close failed", "side", side, "err", err)
+	}
 }

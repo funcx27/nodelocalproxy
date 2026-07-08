@@ -1,11 +1,5 @@
-// Command nodelocalproxy is a per-node, local TCP proxy with health-checked
-// backend failover. It is primarily used to front kube-apiserver: each node
-// runs one instance, /etc/hosts points the control-plane endpoint at 127.0.0.1,
-// and the proxy load-balances across the control-plane nodes' apiservers.
-//
-// The proxy itself is generic — the listen address, backend pool and health
-// checks are driven entirely by a YAML config file, so it can front any service
-// that needs a per-node local proxy with failover.
+// Command nodelocalproxy is a per-node TCP proxy with health-checked backend
+// failover.
 package main
 
 import (
@@ -53,18 +47,22 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Health checker runs for the lifetime of the process; cancelling ctx stops it.
 	checker := newChecker(pool, cfg.Backends, cfg.HealthCheck, log)
 	go checker.run(ctx)
 
-	// Status endpoint: localhost-only HTTP for operator inspection.
 	go func() {
 		ln, err := net.Listen("tcp", cfg.Status)
 		if err != nil {
 			log.Error("status listen failed", "addr", cfg.Status, "err", err)
 			return
 		}
-		srv := &statusServer{listen: cfg.Listen, pool: pool, started: time.Now()}
+		srv := &statusServer{
+			listen:                cfg.Listen,
+			pool:                  pool,
+			backendConnectTimeout: cfg.BackendConnectTimeout,
+			healthCheck:           cfg.HealthCheck,
+			started:               time.Now(),
+		}
 		log.Info("status endpoint", "addr", cfg.Status)
 		if err := srv.serve(ln); err != nil {
 			log.Error("status server stopped", "err", err)
@@ -82,7 +80,7 @@ func run() error {
 		backends:    cfg.Backends,
 		pool:        pool,
 		log:         log,
-		dialTimeout: defaultDialTimeout,
+		dialTimeout: cfg.BackendConnectTimeout,
 	}
 
 	errCh := make(chan error, 1)
@@ -112,5 +110,8 @@ func newLogger(level string) *slog.Logger {
 	default:
 		lv = slog.LevelInfo
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lv}))
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level:     lv,
+		AddSource: true,
+	}))
 }

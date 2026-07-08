@@ -7,19 +7,10 @@ import (
 
 func TestPoolNextHealthyRoundRobin(t *testing.T) {
 	p := newPool([]string{"a:1", "b:1", "c:1"})
-	// mark backends 0 and 2 healthy, 1 unhealthy
-	for i, healthy := range []bool{true, false, true} {
-		s := p.states[i]
-		s.mu.Lock()
-		if healthy {
-			s.health = healthHealthy
-		} else {
-			s.health = healthUnhealthy
-		}
-		s.mu.Unlock()
+	for i, h := range []healthy{healthHealthy, healthUnhealthy, healthHealthy} {
+		setBackendHealth(p, i, h)
 	}
 
-	// Round-robin should alternate between 0 and 2, skipping 1.
 	got := map[int]bool{}
 	for i := 0; i < 6; i++ {
 		idx := p.nextHealthy()
@@ -48,10 +39,8 @@ func TestPoolIndexByAddress(t *testing.T) {
 
 func TestPoolNextHealthyNoneHealthy(t *testing.T) {
 	p := newPool([]string{"a:1", "b:1"})
-	for _, s := range p.states {
-		s.mu.Lock()
-		s.health = healthUnhealthy
-		s.mu.Unlock()
+	for i := range p.states {
+		setBackendHealth(p, i, healthUnhealthy)
 	}
 	if idx := p.nextHealthy(); idx != -1 {
 		t.Fatalf("expected -1 when no backend healthy, got %d", idx)
@@ -66,7 +55,6 @@ func TestPoolMarkResultRestoresHealth(t *testing.T) {
 	s.fails = 5
 	s.mu.Unlock()
 
-	// A successful proxied connection should immediately restore health.
 	p.markResult(0, true, nil)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -88,18 +76,28 @@ func TestPoolSnapshotHasAddress(t *testing.T) {
 
 func TestPoolSnapshotConcurrent(t *testing.T) {
 	p := newPool([]string{"a:1", "b:1", "c:1", "d:1", "e:1"})
-	for _, s := range p.states {
-		s.mu.Lock()
-		s.health = healthHealthy
-		s.mu.Unlock()
+	for i := range p.states {
+		setBackendHealth(p, i, healthHealthy)
 	}
 
-	// Concurrent snapshots + markResult should not race.
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
 		wg.Add(2)
-		go func() { defer wg.Done(); _ = p.snapshot() }()
-		go func() { defer wg.Done(); p.markResult(0, true, nil) }()
+		go func() {
+			defer wg.Done()
+			_ = p.snapshot()
+		}()
+		go func() {
+			defer wg.Done()
+			p.markResult(0, true, nil)
+		}()
 	}
 	wg.Wait()
+}
+
+func setBackendHealth(p *pool, idx int, h healthy) {
+	s := p.states[idx]
+	s.mu.Lock()
+	s.health = h
+	s.mu.Unlock()
 }

@@ -1,0 +1,8 @@
+.git
+.agents
+.codex
+bin
+dist
+*.tar.gz
+Dockerfile
+README.md

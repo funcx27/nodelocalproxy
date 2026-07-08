@@ -7,14 +7,13 @@ import (
 	"time"
 )
 
-// statusServer exposes the proxy state on a localhost-only HTTP endpoint so an
-// operator can inspect backend health (curl <status>/health) without parsing
-// journald. It binds to the Status address from config, which should be
-// 127.0.0.1 to avoid exposing cluster internals to the network.
+// statusServer exposes proxy state on a localhost-only HTTP endpoint.
 type statusServer struct {
-	listen  string
-	pool    *pool
-	started time.Time
+	listen                string
+	pool                  *pool
+	backendConnectTimeout time.Duration
+	healthCheck           HealthCheck
+	started               time.Time
 }
 
 func (s *statusServer) routes() *http.ServeMux {
@@ -23,8 +22,6 @@ func (s *statusServer) routes() *http.ServeMux {
 	return mux
 }
 
-// handleHealth returns the per-backend health snapshot and an overall field
-// derived from whether any backend is currently healthy.
 func (s *statusServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	backends := s.pool.snapshot()
 	anyHealthy := false
@@ -35,15 +32,19 @@ func (s *statusServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	resp := struct {
-		Status   string            `json:"status"`
-		Listen   string            `json:"listen"`
-		Uptime   float64           `json:"uptimeSeconds"`
-		Backends []backendSnapshot `json:"backends"`
+		Status                string              `json:"status"`
+		Listen                string              `json:"listen"`
+		Uptime                float64             `json:"uptimeSeconds"`
+		BackendConnectTimeout string              `json:"backendConnectTimeout"`
+		HealthCheck           healthCheckSnapshot `json:"healthCheck"`
+		Backends              []backendSnapshot   `json:"backends"`
 	}{
-		Status:   healthOverall(anyHealthy),
-		Listen:   s.listen,
-		Uptime:   time.Since(s.started).Seconds(),
-		Backends: backends,
+		Status:                healthOverall(anyHealthy),
+		Listen:                s.listen,
+		Uptime:                time.Since(s.started).Seconds(),
+		BackendConnectTimeout: s.backendConnectTimeout.String(),
+		HealthCheck:           newHealthCheckSnapshot(s.healthCheck),
+		Backends:              backends,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -59,4 +60,26 @@ func healthOverall(anyHealthy bool) string {
 func (s *statusServer) serve(ln net.Listener) error {
 	srv := &http.Server{Handler: s.routes()}
 	return srv.Serve(ln)
+}
+
+type healthCheckSnapshot struct {
+	Type               string `json:"type"`
+	Path               string `json:"path,omitempty"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	Interval           string `json:"interval"`
+	Timeout            string `json:"timeout"`
+	FailureThreshold   int    `json:"failureThreshold"`
+	SuccessThreshold   int    `json:"successThreshold"`
+}
+
+func newHealthCheckSnapshot(hc HealthCheck) healthCheckSnapshot {
+	return healthCheckSnapshot{
+		Type:               hc.Type,
+		Path:               hc.Path,
+		InsecureSkipVerify: hc.InsecureSkipVerify,
+		Interval:           hc.Interval.String(),
+		Timeout:            hc.Timeout.String(),
+		FailureThreshold:   hc.FailureThreshold,
+		SuccessThreshold:   hc.SuccessThreshold,
+	}
 }

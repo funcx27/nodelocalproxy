@@ -1,8 +1,18 @@
-.PHONY: build test lint fmt vet clean release-tarballs
+.PHONY: build test lint fmt vet builder docker-build docker-push clean release-tarballs
 
 BINARY := nodelocalproxy
 VERSION ?= dev
 DIST := dist
+IMAGE ?= $(BINARY):$(VERSION)
+PLATFORMS ?= linux/amd64,linux/arm64
+BUILDER ?= mybuilder
+PROXY ?= http://127.0.0.1:10808
+COMPRESSION ?= zstd
+
+export http_proxy := $(PROXY)
+export https_proxy := $(PROXY)
+export HTTP_PROXY := $(PROXY)
+export HTTPS_PROXY := $(PROXY)
 
 # Static, stripped build: CGO_ENABLED=0 guarantees no glibc dependency, so the
 # single binary runs on any Linux without a compatible libc. -trimpath/-s/-w
@@ -28,6 +38,34 @@ vet:
 
 fmt:
 	gofmt -w .
+
+builder:
+	docker buildx inspect $(BUILDER) >/dev/null 2>&1 || docker buildx create --name $(BUILDER) --driver docker-container --driver-opt env.http_proxy=$(http_proxy) --driver-opt env.https_proxy=$(https_proxy) --use
+	docker buildx inspect --bootstrap $(BUILDER)
+
+docker-build:
+	docker buildx build \
+		--builder $(BUILDER) \
+		--load \
+		--build-arg GO_VERSION=1.25.5 \
+		--build-arg HTTP_PROXY=$(HTTP_PROXY) \
+		--build-arg HTTPS_PROXY=$(HTTPS_PROXY) \
+		--build-arg http_proxy=$(http_proxy) \
+		--build-arg https_proxy=$(https_proxy) \
+		-t $(IMAGE) .
+
+docker-push:
+	docker buildx build \
+		--builder $(BUILDER) \
+		--platform $(PLATFORMS) \
+		--output type=image,compression=$(COMPRESSION) \
+		--build-arg GO_VERSION=1.25.5 \
+		--build-arg HTTP_PROXY=$(HTTP_PROXY) \
+		--build-arg HTTPS_PROXY=$(HTTPS_PROXY) \
+		--build-arg http_proxy=$(http_proxy) \
+		--build-arg https_proxy=$(https_proxy) \
+		-t $(IMAGE) \
+		--push .
 
 # release-tarballs cross-compiles static binaries for the supported arches and
 # packs each into a versioned tarball under dist/. The release workflow calls
