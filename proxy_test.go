@@ -27,8 +27,8 @@ func startEcho(t *testing.T) (net.Listener, func()) {
 		t.Fatalf("listen: %v", err)
 	}
 	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
-		wg.Add(1)
 		defer wg.Done()
 		for {
 			conn, err := ln.Accept()
@@ -207,8 +207,8 @@ func TestHealthCheckHTTP(t *testing.T) {
 	t.Fatalf("health states did not converge: see logs")
 }
 
-// stripHost removes the leading IPv4 "127.0.0.1:" stays as host:port; httptest
-// listener Addr is already host:port so no change needed, kept for clarity.
+// stripHost maps the httptest IPv6 listener address back to IPv4 loopback, since
+// the backends in tests bind 127.0.0.1. host:port strings are returned as-is.
 func stripHost(addr string) string {
 	if strings.HasPrefix(addr, "[::]:") {
 		return "127.0.0.1:" + strings.TrimPrefix(addr, "[::]:")
