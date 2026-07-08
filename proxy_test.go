@@ -179,8 +179,8 @@ func TestHealthCheckHTTP(t *testing.T) {
 	defer badSrv.Close()
 
 	backends := []Backend{
-		{Address: stripHost(okSrv.Listener.Addr().String()), HealthCheck: HealthCheck{Type: "http", Path: "/readyz", InsecureSkipVerify: true, Interval: 50 * time.Millisecond, Timeout: time.Second, FailureThreshold: 1, SuccessThreshold: 1}},
-		{Address: stripHost(badSrv.Listener.Addr().String()), HealthCheck: HealthCheck{Type: "http", Path: "/readyz", InsecureSkipVerify: true, Interval: 50 * time.Millisecond, Timeout: time.Second, FailureThreshold: 1, SuccessThreshold: 1}},
+		{Address: stripHost(okSrv.Listener.Addr().String()), HealthCheck: HealthCheck{Type: "http", Path: "/readyz", Interval: 50 * time.Millisecond, Timeout: time.Second, FailureThreshold: 1, SuccessThreshold: 1}},
+		{Address: stripHost(badSrv.Listener.Addr().String()), HealthCheck: HealthCheck{Type: "http", Path: "/readyz", Interval: 50 * time.Millisecond, Timeout: time.Second, FailureThreshold: 1, SuccessThreshold: 1}},
 	}
 	p := newPool(2)
 	log := quietLogger()

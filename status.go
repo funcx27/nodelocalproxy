@@ -38,13 +38,13 @@ func (s *statusServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	resp := struct {
 		Status       string            `json:"status"`
 		Listen       string            `json:"listen"`
-		Uptime       time.Duration     `json:"uptimeSeconds"`
+		Uptime       float64           `json:"uptimeSeconds"`
 		BackendAddrs []string          `json:"backendAddresses"`
 		Backends     []backendSnapshot `json:"backends"`
 	}{
 		Status:   healthOverall(anyHealthy),
 		Listen:   s.listen,
-		Uptime:   time.Since(s.started).Truncate(time.Second),
+		Uptime:   time.Since(s.started).Seconds(),
 		Backends: backends,
 	}
 	for _, b := range s.backends {

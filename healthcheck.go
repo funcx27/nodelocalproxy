@@ -115,7 +115,7 @@ func (c *checker) doProbe(ctx context.Context, b Backend) error {
 			Timeout: 0, // governed by ctx
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: b.HealthCheck.InsecureSkipVerify, //nolint:gosec // intentional: cluster-internal CA
+					InsecureSkipVerify: b.HealthCheck.skipVerify(), //nolint:gosec // intentional: cluster-internal CA on read-only probe
 				},
 			},
 		}

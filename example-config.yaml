@@ -4,6 +4,10 @@
 # hostname to 127.0.0.1, so kubelet/kubectl reach the local proxy, which
 # load-balances across the control-plane nodes' apiservers with health-checked
 # failover.
+#
+# Minimal backend: only address + healthCheck.type/path are required. All other
+# healthCheck fields have defaults (interval 3s, timeout 1s, insecureSkipVerify
+# true, failureThreshold 2, successThreshold 1).
 
 listen: 127.0.0.1:16443          # local listen address (controlPlaneEndpoint maps here)
 status: 127.0.0.1:16444          # status endpoint, localhost-only
@@ -13,15 +17,17 @@ backends:                        # apiserver pool (each control-plane node's IP:
     healthCheck:
       type: http                 # http (default) probes /readyz over HTTPS | tcp dials the port
       path: /readyz
-      insecureSkipVerify: true   # apiserver uses a cluster-internal CA; read-only probe
-      interval: 3s
-      timeout: 2s
-      failureThreshold: 2        # consecutive failures → unhealthy
-      successThreshold: 1        # consecutive successes → healthy
   - address: 192.168.100.21:6443
     healthCheck:
       type: http
       path: /readyz
-      insecureSkipVerify: true
-      interval: 3s
-      timeout: 2s
+# All defaults omitted above. To override any:
+#   - address: 192.168.100.22:6443
+#     healthCheck:
+#       type: http
+#       path: /readyz
+#       insecureSkipVerify: false # default true; set false only if backend TLS is system-trusted
+#       interval: 5s
+#       timeout: 1s
+#       failureThreshold: 3
+#       successThreshold: 1

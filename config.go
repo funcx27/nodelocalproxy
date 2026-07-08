@@ -25,18 +25,30 @@ type Backend struct {
 
 // HealthCheck defines how a backend is probed. type "http" (default) issues an
 // HTTPS GET to path and treats a 2xx response as healthy; "tcp" only checks the
-// TCP port is connectable. insecureSkipVerify is required for the kube-apiserver
-// /readyz probe because apiserver uses a cluster-internal CA the proxy cannot
-// trust without distributing that CA — skipping verification on this read-only
-// probe is safe and keeps the proxy certificate-free.
+// TCP port is connectable. insecureSkipVerify defaults to true (a *bool) so the
+// minimal config omits it: the kube-apiserver /readyz probe must skip TLS
+// verification because apiserver uses a cluster-internal CA the proxy cannot
+// trust without distributing that CA. Skipping verification on this read-only
+// probe is safe and keeps the proxy certificate-free. Set explicitly to false
+// when probing backends whose TLS chain is trusted by the system CA bundle.
 type HealthCheck struct {
-	Type               string        `yaml:"type"` // "http" (default) | "tcp"
-	Path               string        `yaml:"path"` // HTTP probe path (e.g. /readyz)
-	InsecureSkipVerify bool          `yaml:"insecureSkipVerify"`
+	Type               string        `yaml:"type"`               // "http" (default) | "tcp"
+	Path               string        `yaml:"path"`               // HTTP probe path (e.g. /readyz)
+	InsecureSkipVerify *bool         `yaml:"insecureSkipVerify"` // nil → true (default)
 	Interval           time.Duration `yaml:"interval"`
 	Timeout            time.Duration `yaml:"timeout"`
 	FailureThreshold   int           `yaml:"failureThreshold"` // consecutive failures → unhealthy
 	SuccessThreshold   int           `yaml:"successThreshold"` // consecutive successes → healthy
+}
+
+// skipVerify resolves the insecureSkipVerify setting: nil (unset) defaults to
+// true so the minimal kube-apiserver config works without the operator opting in
+// to skipping verification on every backend. An explicit value is honored.
+func (hc *HealthCheck) skipVerify() bool {
+	if hc.InsecureSkipVerify == nil {
+		return true
+	}
+	return *hc.InsecureSkipVerify
 }
 
 // loadConfig reads and validates the YAML config file.
@@ -83,7 +95,7 @@ func (hc *HealthCheck) applyDefaults() {
 		hc.Interval = 3 * time.Second
 	}
 	if hc.Timeout == 0 {
-		hc.Timeout = 2 * time.Second
+		hc.Timeout = 1 * time.Second
 	}
 	if hc.FailureThreshold == 0 {
 		hc.FailureThreshold = 2
