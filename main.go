@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -50,24 +51,30 @@ func run() error {
 	checker := newChecker(pool, cfg.Backends, cfg.HealthCheck, log)
 	go checker.run(ctx)
 
-	go func() {
-		ln, err := net.Listen("tcp", cfg.Status)
-		if err != nil {
-			log.Error("status listen failed", "addr", cfg.Status, "err", err)
-			return
-		}
-		srv := &statusServer{
-			listen:                cfg.Listen,
-			pool:                  pool,
-			backendConnectTimeout: cfg.BackendConnectTimeout,
-			healthCheck:           cfg.HealthCheck,
-			started:               time.Now(),
-		}
-		log.Info("status endpoint", "addr", cfg.Status)
-		if err := srv.serve(ln); err != nil {
-			log.Error("status server stopped", "err", err)
-		}
-	}()
+	statusLn, statusEndpoint, err := listenEndpoint(cfg.Status)
+	if err != nil {
+		log.Error("status listen failed", "addr", cfg.Status, "err", err)
+	} else {
+		defer func() {
+			if err := statusEndpoint.cleanup(); err != nil && !os.IsNotExist(err) {
+				log.Warn("status cleanup failed", "network", statusEndpoint.network, "addr", statusEndpoint.address, "err", err)
+			}
+		}()
+
+		go func() {
+			srv := &statusServer{
+				listen:                cfg.Listen,
+				pool:                  pool,
+				backendConnectTimeout: cfg.BackendConnectTimeout,
+				healthCheck:           cfg.HealthCheck,
+				started:               time.Now(),
+			}
+			log.Info("status endpoint", "network", statusEndpoint.network, "addr", statusEndpoint.address)
+			if err := srv.serve(statusLn); err != nil && !errors.Is(err, net.ErrClosed) {
+				log.Error("status server stopped", "err", err)
+			}
+		}()
+	}
 
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
@@ -91,6 +98,9 @@ func run() error {
 	select {
 	case <-ctx.Done():
 		log.Info("shutting down")
+		if statusLn != nil {
+			_ = statusLn.Close()
+		}
 		_ = ln.Close()
 		return nil
 	case err := <-errCh:

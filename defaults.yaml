@@ -4,6 +4,7 @@
 # Defaults target kube-apiserver: an HTTPS /readyz probe with TLS verification
 # skipped (apiserver serves a cluster-internal CA) on a 3s/1s cadence.
 backendConnectTimeout: 300ms
+status: unix:///run/nodelocalproxy/status.sock
 healthCheck:
   type: http                 # http probes path over HTTPS | tcp dials the port
   path: /readyz              # http probe path

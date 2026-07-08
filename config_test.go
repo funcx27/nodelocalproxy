@@ -20,7 +20,6 @@ func writeConfig(t *testing.T, content string) string {
 func TestConfigEmbeddedDefaults(t *testing.T) {
 	path := writeConfig(t, `
 listen: 127.0.0.1:16443
-status: 127.0.0.1:16444
 backends:
   - 192.168.100.20:6443
 `)
@@ -30,6 +29,9 @@ backends:
 	}
 	if cfg.BackendConnectTimeout != 300*time.Millisecond {
 		t.Errorf("backendConnectTimeout: got %v want 300ms", cfg.BackendConnectTimeout)
+	}
+	if cfg.Status != "unix:///run/nodelocalproxy/status.sock" {
+		t.Errorf("status: got %q want unix:///run/nodelocalproxy/status.sock", cfg.Status)
 	}
 	hc := cfg.HealthCheck
 	if hc.Type != "http" {
@@ -52,6 +54,22 @@ backends:
 	}
 	if hc.SuccessThreshold != 1 {
 		t.Errorf("successThreshold: got %d want 1", hc.SuccessThreshold)
+	}
+}
+
+func TestConfigStatusOverridesDefault(t *testing.T) {
+	path := writeConfig(t, `
+listen: 127.0.0.1:16443
+status: tcp://127.0.0.1:16444
+backends:
+  - 192.168.100.20:6443
+`)
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.Status != "tcp://127.0.0.1:16444" {
+		t.Errorf("status: got %q want tcp://127.0.0.1:16444", cfg.Status)
 	}
 }
 

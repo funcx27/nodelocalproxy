@@ -8,9 +8,8 @@
 # Omitted fields inherit embedded defaults. To front services needing different
 # probe settings, run multiple proxy instances.
 
-# Minimal config: backends only, healthCheck inherited from embedded defaults.
-listen: 127.0.0.1:16443          # local listen address (controlPlaneEndpoint maps here)
-status: 127.0.0.1:16444          # status endpoint, localhost-only
+# Minimal config: status and healthCheck inherit embedded defaults.
+listen: 127.0.0.1:6443          # local listen address (controlPlaneEndpoint maps here)
 backends:                        # apiserver pool (each control-plane node's IP:6443)
   - 192.168.100.20:6443
   - 192.168.100.21:6443

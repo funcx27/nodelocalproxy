@@ -107,8 +107,25 @@ Run:
 ./nodelocalproxy --config config.yaml
 ```
 
-Status (localhost-only):
+Status defaults to a Unix socket. The parent directory is created
+automatically:
+
+```yaml
+status: unix:///run/nodelocalproxy/status.sock
+```
+
+```sh
+curl --unix-socket /run/nodelocalproxy/status.sock http://localhost/health
+```
+
+Status can be exposed on TCP when needed:
+
+```yaml
+status: tcp://127.0.0.1:16444
+```
 
 ```sh
 curl 127.0.0.1:16444/health
 ```
+
+`host:port` is also accepted for compatibility.
