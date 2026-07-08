@@ -1,0 +1,27 @@
+# nodelocalproxy example config — kube-apiserver per-node load balancing.
+#
+# Each node runs one nodelocalproxy. /etc/hosts maps the control-plane endpoint
+# hostname to 127.0.0.1, so kubelet/kubectl reach the local proxy, which
+# load-balances across the control-plane nodes' apiservers with health-checked
+# failover.
+
+listen: 127.0.0.1:16443          # local listen address (controlPlaneEndpoint maps here)
+status: 127.0.0.1:16444          # status endpoint, localhost-only
+
+backends:                        # apiserver pool (each control-plane node's IP:6443)
+  - address: 192.168.100.20:6443
+    healthCheck:
+      type: http                 # http (default) probes /readyz over HTTPS | tcp dials the port
+      path: /readyz
+      insecureSkipVerify: true   # apiserver uses a cluster-internal CA; read-only probe
+      interval: 3s
+      timeout: 2s
+      failureThreshold: 2        # consecutive failures → unhealthy
+      successThreshold: 1        # consecutive successes → healthy
+  - address: 192.168.100.21:6443
+    healthCheck:
+      type: http
+      path: /readyz
+      insecureSkipVerify: true
+      interval: 3s
+      timeout: 2s
