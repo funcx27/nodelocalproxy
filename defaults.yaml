@@ -1,0 +1,14 @@
+# nodelocalproxy default healthCheck, embedded into the binary.
+#
+# Used verbatim when the config omits healthCheck entirely. When the config sets
+# healthCheck, it must be complete (every field) — there is no field-level merge.
+# Defaults target kube-apiserver: an HTTPS /readyz probe with TLS verification
+# skipped (apiserver serves a cluster-internal CA) on a 3s/1s cadence.
+healthCheck:
+  type: http                 # http probes path over HTTPS | tcp dials the port
+  path: /readyz              # http probe path
+  insecureSkipVerify: true   # apiserver cluster-internal CA is not trusted locally
+  interval: 3s
+  timeout: 1s
+  failureThreshold: 2        # consecutive failures → unhealthy
+  successThreshold: 1        # consecutive successes → healthy

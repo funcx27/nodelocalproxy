@@ -6,7 +6,7 @@ import (
 )
 
 func TestPoolNextHealthyRoundRobin(t *testing.T) {
-	p := newPool(3)
+	p := newPool([]string{"a:1", "b:1", "c:1"})
 	// mark backends 0 and 2 healthy, 1 unhealthy
 	for i, healthy := range []bool{true, false, true} {
 		s := p.states[i]
@@ -36,8 +36,18 @@ func TestPoolNextHealthyRoundRobin(t *testing.T) {
 	}
 }
 
+func TestPoolIndexByAddress(t *testing.T) {
+	p := newPool([]string{"a:1", "b:1", "c:1"})
+	if idx := p.index("b:1"); idx != 1 {
+		t.Fatalf("index(b:1): got %d want 1", idx)
+	}
+	if idx := p.index("missing:1"); idx != -1 {
+		t.Fatalf("index(missing): got %d want -1", idx)
+	}
+}
+
 func TestPoolNextHealthyNoneHealthy(t *testing.T) {
-	p := newPool(2)
+	p := newPool([]string{"a:1", "b:1"})
 	for _, s := range p.states {
 		s.mu.Lock()
 		s.health = healthUnhealthy
@@ -49,7 +59,7 @@ func TestPoolNextHealthyNoneHealthy(t *testing.T) {
 }
 
 func TestPoolMarkResultRestoresHealth(t *testing.T) {
-	p := newPool(1)
+	p := newPool([]string{"a:1"})
 	s := p.states[0]
 	s.mu.Lock()
 	s.health = healthUnhealthy
@@ -68,8 +78,16 @@ func TestPoolMarkResultRestoresHealth(t *testing.T) {
 	}
 }
 
+func TestPoolSnapshotHasAddress(t *testing.T) {
+	p := newPool([]string{"a:1", "b:1"})
+	snap := p.snapshot()
+	if len(snap) != 2 || snap[0].Address != "a:1" || snap[1].Address != "b:1" {
+		t.Fatalf("snapshot addresses: %+v", snap)
+	}
+}
+
 func TestPoolSnapshotConcurrent(t *testing.T) {
-	p := newPool(10)
+	p := newPool([]string{"a:1", "b:1", "c:1", "d:1", "e:1"})
 	for _, s := range p.states {
 		s.mu.Lock()
 		s.health = healthHealthy

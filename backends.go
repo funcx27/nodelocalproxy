@@ -33,19 +33,31 @@ const (
 	healthUnhealthy
 )
 
-// pool holds the backend states and the round-robin cursor. It is safe for
-// concurrent use by the accept loop (cursor) and the health checker (states).
+// pool holds the backend addresses, their runtime states and the round-robin
+// cursor. It is safe for concurrent use by the accept loop (cursor) and the
+// health checker (states).
 type pool struct {
-	states []*backendState
-	cursor uint64
+	addresses []string
+	states    []*backendState
+	cursor    uint64
 }
 
-func newPool(n int) *pool {
-	states := make([]*backendState, n)
+func newPool(addresses []string) *pool {
+	states := make([]*backendState, len(addresses))
 	for i := range states {
 		states[i] = &backendState{health: healthUnknown}
 	}
-	return &pool{states: states}
+	return &pool{addresses: addresses, states: states}
+}
+
+// index returns the pool slot for a backend address, or -1 if unknown.
+func (p *pool) index(addr string) int {
+	for i, a := range p.addresses {
+		if a == addr {
+			return i
+		}
+	}
+	return -1
 }
 
 // snapshot returns a copy of the backend health suitable for the status
@@ -57,6 +69,7 @@ func (p *pool) snapshot() []backendSnapshot {
 		s.mu.Lock()
 		out[i] = backendSnapshot{
 			Index:     i,
+			Address:   p.addresses[i],
 			Health:    s.health.String(),
 			Fails:     s.fails,
 			Success:   s.success,
@@ -132,6 +145,7 @@ func (h healthy) String() string {
 // backendSnapshot is the JSON-serializable view of one backend in /health.
 type backendSnapshot struct {
 	Index     int       `json:"index"`
+	Address   string    `json:"address"`
 	Health    string    `json:"health"`
 	Fails     int       `json:"fails"`
 	Success   int       `json:"success"`

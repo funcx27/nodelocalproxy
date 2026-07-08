@@ -30,6 +30,11 @@ approach used by kubespray's HAProxy templates and RKE2.
 
 ## Health checks
 
+A single `healthCheck` block (top-level) applies to every backend uniformly.
+The common kube-apiserver case probes every apiserver identically, so per-backend
+health checks are intentionally not supported — to front services needing
+different probe settings, run multiple proxy instances, each with its own config.
+
 | type | behavior |
 |------|----------|
 | `http` (default) | HTTPS GET to `path` (e.g. `/readyz`); 2xx = healthy. Uses `insecureSkipVerify` because apiserver serves a cluster-internal CA. |
@@ -40,10 +45,15 @@ fail `failureThreshold` consecutive checks to become unhealthy — this gives fl
 resistance without slow recovery. Even if the health check is stale, per-request
 `connect()` failure provides a second layer of failover.
 
+When `healthCheck` is omitted, the embedded `defaults.yaml` is used (http
+`/readyz`, `insecureSkipVerify: true`, 3s/1s, thresholds 2/1). When set, it
+**replaces** the defaults entirely (no field-level merge), so every field must be
+specified.
+
 ## Config
 
-See [`example-config.yaml`](example-config.yaml). Each backend has its own
-`healthCheck` block.
+See [`example-config.yaml`](example-config.yaml). Backends are bare address
+strings; `healthCheck` is optional (embedded defaults) or a complete block.
 
 ## Build
 

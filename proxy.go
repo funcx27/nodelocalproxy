@@ -18,7 +18,7 @@ import (
 // without dropping the request.
 type proxy struct {
 	listen   string
-	backends []Backend
+	backends []string
 	pool     *pool
 	log      *slog.Logger
 
@@ -65,15 +65,15 @@ func (p *proxy) handle(ctx context.Context, client net.Conn) {
 		b := p.backends[idx]
 
 		d := net.Dialer{Timeout: p.dialTimeout}
-		upstream, err := d.DialContext(ctx, "tcp", b.Address)
+		upstream, err := d.DialContext(ctx, "tcp", b)
 		if err != nil {
 			p.pool.markResult(idx, false, err)
-			p.log.Debug("backend connect failed, failing over", "backend", b.Address, "client", addr, "err", err)
+			p.log.Debug("backend connect failed, failing over", "backend", b, "client", addr, "err", err)
 			continue
 		}
 
 		p.pool.markResult(idx, true, nil)
-		p.log.Debug("connected", "backend", b.Address, "client", addr)
+		p.log.Debug("connected", "backend", b, "client", addr)
 		p.relay(client, upstream)
 		return
 	}

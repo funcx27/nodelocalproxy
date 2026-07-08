@@ -47,6 +47,15 @@ func startEcho(t *testing.T) (net.Listener, func()) {
 	}
 }
 
+// markAllHealthy flips every backend in the pool to healthy for a test setup.
+func markAllHealthy(p *pool) {
+	for _, s := range p.states {
+		s.mu.Lock()
+		s.health = healthHealthy
+		s.mu.Unlock()
+	}
+}
+
 // TestProxyFailover sets up two backends; the first is closed so the dial fails,
 // the second is a healthy echo server. The proxy must fail over and the client
 // receives its data echoed back.
@@ -71,27 +80,20 @@ func TestProxyFailover(t *testing.T) {
 	}
 	defer ln.Close()
 
-	proxyLn := &proxy{
+	p := &proxy{
 		listen:      ln.Addr().String(),
 		dialTimeout: 500 * time.Millisecond,
-		backends: []Backend{
-			{Address: deadAddr, HealthCheck: &HealthCheck{Type: "tcp"}},
-			{Address: echoAddr, HealthCheck: &HealthCheck{Type: "tcp"}},
-		},
-		pool: newPool(2),
-		log:  quietLogger(),
+		backends:    []string{deadAddr, echoAddr},
+		pool:        newPool([]string{deadAddr, echoAddr}),
+		log:         quietLogger(),
 	}
 	// Both backends start healthy so the proxy will try backend 0, fail, and
 	// fail over to backend 1.
-	for _, s := range proxyLn.pool.states {
-		s.mu.Lock()
-		s.health = healthHealthy
-		s.mu.Unlock()
-	}
+	markAllHealthy(p.pool)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go proxyLn.serve(ctx, ln)
+	go p.serve(ctx, ln)
 
 	// Client: send and expect echo.
 	conn, err := net.Dial("tcp", ln.Addr().String())
@@ -128,20 +130,18 @@ func TestProxyAllDown(t *testing.T) {
 	}
 	defer ln.Close()
 
-	pr := &proxy{
+	p := &proxy{
 		listen:      ln.Addr().String(),
 		dialTimeout: 300 * time.Millisecond,
-		backends:    []Backend{{Address: deadAddr, HealthCheck: &HealthCheck{Type: "tcp"}}},
-		pool:        newPool(1),
+		backends:    []string{deadAddr},
+		pool:        newPool([]string{deadAddr}),
 		log:         quietLogger(),
 	}
-	pr.pool.states[0].mu.Lock()
-	pr.pool.states[0].health = healthHealthy
-	pr.pool.states[0].mu.Unlock()
+	markAllHealthy(p.pool)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go pr.serve(ctx, ln)
+	go p.serve(ctx, ln)
 
 	conn, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
 	if err != nil {
@@ -178,13 +178,19 @@ func TestHealthCheckHTTP(t *testing.T) {
 	}))
 	defer badSrv.Close()
 
-	backends := []Backend{
-		{Address: stripHost(okSrv.Listener.Addr().String()), HealthCheck: &HealthCheck{Type: "http", Path: "/readyz", Interval: 50 * time.Millisecond, Timeout: time.Second, FailureThreshold: 1, SuccessThreshold: 1}},
-		{Address: stripHost(badSrv.Listener.Addr().String()), HealthCheck: &HealthCheck{Type: "http", Path: "/readyz", Interval: 50 * time.Millisecond, Timeout: time.Second, FailureThreshold: 1, SuccessThreshold: 1}},
+	okAddr := stripHost(okSrv.Listener.Addr().String())
+	badAddr := stripHost(badSrv.Listener.Addr().String())
+	hc := HealthCheck{
+		Type:               "http",
+		Path:               "/readyz",
+		InsecureSkipVerify: true,
+		Interval:           50 * time.Millisecond,
+		Timeout:            time.Second,
+		FailureThreshold:   1,
+		SuccessThreshold:   1,
 	}
-	p := newPool(2)
-	log := quietLogger()
-	ch := newChecker(p, backends, log)
+	p := newPool([]string{okAddr, badAddr})
+	ch := newChecker(p, []string{okAddr, badAddr}, hc, quietLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

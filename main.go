@@ -49,12 +49,12 @@ func run() error {
 	}
 	log.Info("config loaded", "listen", cfg.Listen, "status", cfg.Status, "backends", len(cfg.Backends))
 
-	pool := newPool(len(cfg.Backends))
+	pool := newPool(cfg.Backends)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	// Health checker runs for the lifetime of the process; cancelling ctx stops it.
-	checker := newChecker(pool, cfg.Backends, log)
+	checker := newChecker(pool, cfg.Backends, cfg.HealthCheck, log)
 	go checker.run(ctx)
 
 	// Status endpoint: localhost-only HTTP for operator inspection.
@@ -64,7 +64,7 @@ func run() error {
 			log.Error("status listen failed", "addr", cfg.Status, "err", err)
 			return
 		}
-		srv := &statusServer{listen: cfg.Listen, backends: cfg.Backends, pool: pool, started: time.Now()}
+		srv := &statusServer{listen: cfg.Listen, pool: pool, started: time.Now()}
 		log.Info("status endpoint", "addr", cfg.Status)
 		if err := srv.serve(ln); err != nil {
 			log.Error("status server stopped", "err", err)

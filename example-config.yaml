@@ -5,17 +5,25 @@
 # load-balances across the control-plane nodes' apiservers with health-checked
 # failover.
 #
-# Minimal backend: only address is required. healthCheck has defaults:
-#   type http, path /readyz, insecureSkipVerify true, interval 3s, timeout 1s,
-#   failureThreshold 2, successThreshold 1.
-# So the shortest form is `address` alone — healthCheck can be omitted entirely.
+# healthCheck applies to every backend uniformly. Omit it to use the embedded
+# defaults (http /readyz, insecureSkipVerify true, 3s/1s, thresholds 2/1); when
+# set, it replaces the defaults entirely so every field must be specified. To
+# front services needing different probe settings, run multiple proxy instances.
 
+# Minimal config: backends only, healthCheck inherited from embedded defaults.
 listen: 127.0.0.1:16443          # local listen address (controlPlaneEndpoint maps here)
 status: 127.0.0.1:16444          # status endpoint, localhost-only
-
 backends:                        # apiserver pool (each control-plane node's IP:6443)
-  - address: 192.168.100.20:6443
-  - address: 192.168.100.21:6443
-    healthCheck: { type: http, path: /readyz }
-  - address: 192.168.100.22:6443
-    healthCheck: { type: http, path: /readyz, insecureSkipVerify: false, interval: 5s }
+  - 192.168.100.20:6443
+  - 192.168.100.21:6443
+  - 192.168.100.22:6443
+
+# Explicit healthCheck (replaces embedded defaults; every field required):
+# healthCheck:
+#   type: tcp                   # http probes path over HTTPS | tcp dials the port
+#   path: /readyz               # http probe path
+#   insecureSkipVerify: true    # apiserver cluster-internal CA is not trusted locally
+#   interval: 3s
+#   timeout: 1s
+#   failureThreshold: 2         # consecutive failures → unhealthy
+#   successThreshold: 1         # consecutive successes → healthy

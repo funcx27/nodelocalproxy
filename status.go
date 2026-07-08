@@ -12,10 +12,9 @@ import (
 // journald. It binds to the Status address from config, which should be
 // 127.0.0.1 to avoid exposing cluster internals to the network.
 type statusServer struct {
-	listen   string
-	backends []Backend
-	pool     *pool
-	started  time.Time
+	listen  string
+	pool    *pool
+	started time.Time
 }
 
 func (s *statusServer) routes() *http.ServeMux {
@@ -36,19 +35,15 @@ func (s *statusServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	resp := struct {
-		Status       string            `json:"status"`
-		Listen       string            `json:"listen"`
-		Uptime       float64           `json:"uptimeSeconds"`
-		BackendAddrs []string          `json:"backendAddresses"`
-		Backends     []backendSnapshot `json:"backends"`
+		Status   string            `json:"status"`
+		Listen   string            `json:"listen"`
+		Uptime   float64           `json:"uptimeSeconds"`
+		Backends []backendSnapshot `json:"backends"`
 	}{
 		Status:   healthOverall(anyHealthy),
 		Listen:   s.listen,
 		Uptime:   time.Since(s.started).Seconds(),
 		Backends: backends,
-	}
-	for _, b := range s.backends {
-		resp.BackendAddrs = append(resp.BackendAddrs, b.Address)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
