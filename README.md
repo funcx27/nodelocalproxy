@@ -118,6 +118,43 @@ status: unix:///run/nodelocalproxy/status.sock
 curl --unix-socket /run/nodelocalproxy/status.sock http://localhost/health
 ```
 
+The same status can be queried with the built-in command, without requiring
+`curl`, `jq` or `column`:
+
+```sh
+./nodelocalproxy status
+```
+
+It prints a short summary and backend table by default:
+
+```text
+Status: OK
+Listen: 127.0.0.1:16443
+Uptime: 5m12s
+Backend connect timeout: 300ms
+Connections: 2/128/2 (ACTIVE/TOTAL/FAILED)
+Health check: http /readyz, interval 3s, timeout 1s, thresholds fail=2 success=1
+
+ADDRESS        HEALTH  CONNECTIONS  FAILS  SUCCESS  CHECKED                    ERROR
+10.0.0.1:6443  OK      1/72/0      0      4        2026-07-14T15:04:05+08:00  -
+10.0.0.2:6443  OK      1/56/0      0      4        2026-07-14T15:04:05+08:00  -
+```
+
+By default the command uses the built-in Unix status endpoint:
+
+```sh
+./nodelocalproxy status
+```
+
+Pass the daemon config when the status endpoint is customized. This supports
+both Unix sockets and TCP status endpoints:
+
+```sh
+./nodelocalproxy status --config config.yaml
+```
+
+Use `--json` to print the raw health JSON.
+
 Status can be exposed on TCP when needed:
 
 ```yaml

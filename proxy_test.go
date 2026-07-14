@@ -94,6 +94,7 @@ func TestProxyFailover(t *testing.T) {
 		backends:    []string{deadAddr, echoAddr},
 		pool:        newPool([]string{deadAddr, echoAddr}),
 		log:         quietLogger(),
+		stats:       &connectionStats{},
 	}
 	markAllHealthy(p.pool)
 	startProxy(t, p, ln)
@@ -113,6 +114,23 @@ func TestProxyFailover(t *testing.T) {
 	}
 	if string(buf) != payload {
 		t.Fatalf("echo mismatch: got %q", buf)
+	}
+	stats := p.stats.snapshot()
+	if stats.Total != 1 {
+		t.Fatalf("stats total: got %d want 1", stats.Total)
+	}
+	if stats.Connected != 1 {
+		t.Fatalf("stats connected: got %d want 1", stats.Connected)
+	}
+	if stats.Failed != 0 {
+		t.Fatalf("stats failed: got %d want 0", stats.Failed)
+	}
+	backends := p.pool.snapshot()
+	if backends[0].Connections.Failed != 1 {
+		t.Fatalf("dead backend failed connections: got %d want 1", backends[0].Connections.Failed)
+	}
+	if backends[1].Connections.Total != 1 {
+		t.Fatalf("echo backend total connections: got %d want 1", backends[1].Connections.Total)
 	}
 }
 
@@ -135,6 +153,7 @@ func TestProxyAllDown(t *testing.T) {
 		backends:    []string{deadAddr},
 		pool:        newPool([]string{deadAddr}),
 		log:         quietLogger(),
+		stats:       &connectionStats{},
 	}
 	markAllHealthy(p.pool)
 	startProxy(t, p, ln)
@@ -154,6 +173,20 @@ func TestProxyAllDown(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("proxy hung instead of closing the client connection")
+	}
+	stats := p.stats.snapshot()
+	if stats.Total != 1 {
+		t.Fatalf("stats total: got %d want 1", stats.Total)
+	}
+	if stats.Connected != 0 {
+		t.Fatalf("stats connected: got %d want 0", stats.Connected)
+	}
+	if stats.Failed != 1 {
+		t.Fatalf("stats failed: got %d want 1", stats.Failed)
+	}
+	backends := p.pool.snapshot()
+	if backends[0].Connections.Failed != 1 {
+		t.Fatalf("backend failed connections: got %d want 1", backends[0].Connections.Failed)
 	}
 }
 

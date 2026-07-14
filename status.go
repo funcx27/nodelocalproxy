@@ -13,6 +13,7 @@ type statusServer struct {
 	pool                  *pool
 	backendConnectTimeout time.Duration
 	healthCheck           HealthCheck
+	connections           *connectionStats
 	started               time.Time
 }
 
@@ -37,6 +38,7 @@ func (s *statusServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		Uptime                float64             `json:"uptimeSeconds"`
 		BackendConnectTimeout string              `json:"backendConnectTimeout"`
 		HealthCheck           healthCheckSnapshot `json:"healthCheck"`
+		Connections           connectionSnapshot  `json:"connections"`
 		Backends              []backendSnapshot   `json:"backends"`
 	}{
 		Status:                healthOverall(anyHealthy),
@@ -44,6 +46,7 @@ func (s *statusServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		Uptime:                time.Since(s.started).Seconds(),
 		BackendConnectTimeout: s.backendConnectTimeout.String(),
 		HealthCheck:           newHealthCheckSnapshot(s.healthCheck),
+		Connections:           s.connections.snapshot(),
 		Backends:              backends,
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -16,6 +16,10 @@ type backendState struct {
 
 	lastErr   string
 	lastCheck time.Time
+
+	activeConnections atomic.Int64
+	totalConnections  atomic.Uint64
+	failedConnections atomic.Uint64
 }
 
 type healthy int
@@ -61,10 +65,47 @@ func (p *pool) snapshot() []backendSnapshot {
 			Success:   s.success,
 			LastErr:   s.lastErr,
 			LastCheck: s.lastCheck,
+			Connections: backendConnectionSnapshot{
+				Active: s.activeConnections.Load(),
+				Total:  s.totalConnections.Load(),
+				Failed: s.failedConnections.Load(),
+			},
 		}
 		s.mu.Unlock()
 	}
 	return out
+}
+
+func (p *pool) markBackendConnected(idx int) {
+	s, ok := p.state(idx)
+	if !ok {
+		return
+	}
+	s.activeConnections.Add(1)
+	s.totalConnections.Add(1)
+}
+
+func (p *pool) markBackendClosed(idx int) {
+	s, ok := p.state(idx)
+	if !ok {
+		return
+	}
+	s.activeConnections.Add(-1)
+}
+
+func (p *pool) markBackendConnectFailure(idx int) {
+	s, ok := p.state(idx)
+	if !ok {
+		return
+	}
+	s.failedConnections.Add(1)
+}
+
+func (p *pool) state(idx int) (*backendState, bool) {
+	if idx < 0 || idx >= len(p.states) {
+		return nil, false
+	}
+	return p.states[idx], true
 }
 
 func (p *pool) nextHealthy() int {
@@ -123,11 +164,18 @@ func (h healthy) String() string {
 }
 
 type backendSnapshot struct {
-	Index     int       `json:"index"`
-	Address   string    `json:"address"`
-	Health    string    `json:"health"`
-	Fails     int       `json:"fails"`
-	Success   int       `json:"success"`
-	LastErr   string    `json:"lastErr,omitempty"`
-	LastCheck time.Time `json:"lastCheck,omitempty"`
+	Index       int                       `json:"index"`
+	Address     string                    `json:"address"`
+	Health      string                    `json:"health"`
+	Fails       int                       `json:"fails"`
+	Success     int                       `json:"success"`
+	LastErr     string                    `json:"lastErr,omitempty"`
+	LastCheck   time.Time                 `json:"lastCheck,omitempty"`
+	Connections backendConnectionSnapshot `json:"connections"`
+}
+
+type backendConnectionSnapshot struct {
+	Active int64  `json:"active"`
+	Total  uint64 `json:"total"`
+	Failed uint64 `json:"failed"`
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -17,20 +18,31 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			os.Exit(0)
+		}
 		fmt.Fprintf(os.Stderr, "nodelocalproxy: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "status" {
+		return runStatusCommand(args[1:], stdout, stderr)
+	}
+
 	var (
 		configPath string
 		logLevel   string
 	)
-	flag.StringVar(&configPath, "config", "", "path to YAML config file (required)")
-	flag.StringVar(&logLevel, "log-level", "info", `log level: "debug", "info", "warn", "error"`)
-	flag.Parse()
+	fs := flag.NewFlagSet("nodelocalproxy", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&configPath, "config", "", "path to YAML config file (required)")
+	fs.StringVar(&logLevel, "log-level", "info", `log level: "debug", "info", "warn", "error"`)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if configPath == "" {
 		return fmt.Errorf("--config is required")
@@ -45,6 +57,7 @@ func run() error {
 	log.Info("config loaded", "listen", cfg.Listen, "status", cfg.Status, "backends", len(cfg.Backends))
 
 	pool := newPool(cfg.Backends)
+	stats := &connectionStats{}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -67,6 +80,7 @@ func run() error {
 				pool:                  pool,
 				backendConnectTimeout: cfg.BackendConnectTimeout,
 				healthCheck:           cfg.HealthCheck,
+				connections:           stats,
 				started:               time.Now(),
 			}
 			log.Info("status endpoint", "network", statusEndpoint.network, "addr", statusEndpoint.address)
@@ -88,6 +102,7 @@ func run() error {
 		pool:        pool,
 		log:         log,
 		dialTimeout: cfg.BackendConnectTimeout,
+		stats:       stats,
 	}
 
 	errCh := make(chan error, 1)

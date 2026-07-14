@@ -11,6 +11,9 @@ import (
 func TestStatusHealthIncludesHealthCheck(t *testing.T) {
 	p := newPool([]string{"127.0.0.1:6443"})
 	markAllHealthy(p)
+	stats := &connectionStats{}
+	stats.open()
+	stats.connect()
 
 	hc := HealthCheck{
 		Type:               "http",
@@ -26,6 +29,7 @@ func TestStatusHealthIncludesHealthCheck(t *testing.T) {
 		pool:                  p,
 		backendConnectTimeout: 300 * time.Millisecond,
 		healthCheck:           hc,
+		connections:           stats,
 		started:               time.Now(),
 	}
 
@@ -36,6 +40,7 @@ func TestStatusHealthIncludesHealthCheck(t *testing.T) {
 	var got struct {
 		BackendConnectTimeout string              `json:"backendConnectTimeout"`
 		HealthCheck           healthCheckSnapshot `json:"healthCheck"`
+		Connections           connectionSnapshot  `json:"connections"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -63,5 +68,14 @@ func TestStatusHealthIncludesHealthCheck(t *testing.T) {
 	}
 	if !got.HealthCheck.InsecureSkipVerify {
 		t.Error("insecureSkipVerify: want true")
+	}
+	if got.Connections.Active != 1 {
+		t.Errorf("connections.active: got %d want 1", got.Connections.Active)
+	}
+	if got.Connections.Total != 1 {
+		t.Errorf("connections.total: got %d want 1", got.Connections.Total)
+	}
+	if got.Connections.Connected != 1 {
+		t.Errorf("connections.connected: got %d want 1", got.Connections.Connected)
 	}
 }
