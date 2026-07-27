@@ -31,16 +31,13 @@ build:
 
 # ebpf-vmlinux regenerates internal/ebpf/headers/vmlinux.h from the running
 # kernel's BTF. Requires bpftool + a BTF-capable kernel (/sys/kernel/btf/vmlinux).
-# Only needed when targeting a different kernel; the committed vmlinux.h is the
-# default and ebpf-generate work without re-running this.
+# Only needed when refreshing the checked-in bpf2go artifacts.
 ebpf-vmlinux:
 	mkdir -p internal/ebpf/headers
 	bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/ebpf/headers/vmlinux.h
 
-# ebpf-generate runs `go generate` against the eBPF package — regenerates the
-# committed prebuilt object/source assets under internal/ebpf/. Requires clang
-# on PATH and the committed vmlinux.h (or run ebpf-vmlinux first); the committed
-# assets let a normal `go build` skip this step.
+# ebpf-generate refreshes the checked-in bpf2go artifacts under internal/ebpf/.
+# Requires clang + llvm-strip on PATH and vmlinux.h from ebpf-vmlinux.
 ebpf-generate: ebpf-vmlinux
 	go generate -tags ebpf ./internal/ebpf/
 

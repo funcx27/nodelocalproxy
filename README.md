@@ -102,9 +102,10 @@ without traversing a userspace forwarder.
 `mode: ebpf-transparent` is configured, startup runs preflight and fails fast on
 unsupported nodes.
 
-`make ebpf-generate` regenerates the bpf2go artifacts
-(`internal/ebpf/nlp_bpfel.go`, `nlp_bpfel.o`, `headers/vmlinux.h` — all
-gitignored). It needs clang/llvm + bpftool + a BTF-capable kernel.
+`make ebpf-generate` refreshes the checked-in bpf2go artifacts
+(`internal/ebpf/nlp_bpfel.go`, `nlp_bpfel.o`). It needs clang, llvm-strip,
+bpftool, and a BTF-capable kernel. `headers/vmlinux.h` is generated locally and
+is not committed.
 
 ```sh
 make build           # one binary supporting userspace + ebpf-transparent
