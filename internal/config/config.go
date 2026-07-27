@@ -1,8 +1,9 @@
-package main
+package config
 
 import (
 	_ "embed"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 //go:embed defaults.yaml
 var defaultConfigYAML []byte
 
+const maxBackends = 16
+
 // Config is the YAML configuration loaded from the --config file.
 type Config struct {
 	Listen                string        `yaml:"listen"`
@@ -19,7 +22,17 @@ type Config struct {
 	BackendConnectTimeout time.Duration `yaml:"backendConnectTimeout"`
 	HealthCheck           HealthCheck   `yaml:"healthCheck"`
 	Backends              []string      `yaml:"backends"`
+	Mode                  string        `yaml:"mode"`
+	Intercept             Intercept     `yaml:"intercept"`
 }
+
+// Intercept configures the eBPF transparent-connect hook.
+type Intercept struct {
+	Address string `yaml:"address"`
+}
+
+// IsEbpfMode reports whether the proxy is running in eBPF transparent-connect mode.
+func (c *Config) IsEbpfMode() bool { return c.Mode == "ebpf-transparent" }
 
 // HealthCheck defines how each backend is probed.
 type HealthCheck struct {
@@ -32,12 +45,15 @@ type HealthCheck struct {
 	SuccessThreshold   int           `yaml:"successThreshold"`
 }
 
-func loadConfig(path string) (*Config, error) {
+func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	return LoadConfigData(data)
+}
 
+func LoadConfigData(data []byte) (*Config, error) {
 	var c Config
 	if err := yaml.Unmarshal(defaultConfigYAML, &c); err != nil {
 		return nil, fmt.Errorf("parse embedded defaults: %w", err)
@@ -52,13 +68,48 @@ func loadConfig(path string) (*Config, error) {
 }
 
 func (c *Config) validate() error {
-	if c.Listen == "" {
-		return fmt.Errorf("listen is required")
+	switch c.Mode {
+	case "", "userspace", "ebpf-transparent":
+	default:
+		return fmt.Errorf("mode must be \"userspace\" or \"ebpf-transparent\", got %q", c.Mode)
 	}
+	if c.IsEbpfMode() {
+		if err := c.validateEbpf(); err != nil {
+			return err
+		}
+	} else {
+		if err := c.validateUserspace(); err != nil {
+			return err
+		}
+	}
+	return c.HealthCheck.validate()
+}
+
+func (c *Config) validateUserspace() error {
+	if c.Listen == "" {
+		return fmt.Errorf("listen is required (userspace mode)")
+	}
+	return c.validateBackendsCommon(true)
+}
+
+func (c *Config) validateEbpf() error {
+	if c.Intercept.Address == "" {
+		return fmt.Errorf("intercept.address is required (ebpf-transparent mode)")
+	}
+	if _, _, err := net.SplitHostPort(c.Intercept.Address); err != nil {
+		return fmt.Errorf("intercept.address %q: %w", c.Intercept.Address, err)
+	}
+	return c.validateBackendsCommon(false)
+}
+
+func (c *Config) validateBackendsCommon(requireTimeout bool) error {
 	if len(c.Backends) == 0 {
 		return fmt.Errorf("at least one backend is required")
 	}
-	if c.BackendConnectTimeout <= 0 {
+	if len(c.Backends) > maxBackends {
+		return fmt.Errorf("backends: got %d, max %d (BPF map limit)", len(c.Backends), maxBackends)
+	}
+	if requireTimeout && c.BackendConnectTimeout <= 0 {
 		return fmt.Errorf("backendConnectTimeout must be positive")
 	}
 	for i, b := range c.Backends {
@@ -66,7 +117,7 @@ func (c *Config) validate() error {
 			return fmt.Errorf("backends[%d] is empty", i)
 		}
 	}
-	return c.HealthCheck.validate()
+	return nil
 }
 
 func (hc *HealthCheck) validate() error {

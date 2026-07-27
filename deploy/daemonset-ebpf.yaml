@@ -1,0 +1,117 @@
+# nodelocalproxy eBPF mode. Replace --bootstrap-intercept-address with the
+# apiserver host:port clients dial. On first start the daemon creates the
+# nodelocalproxy ConfigMap from default/kubernetes Endpoints.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nodelocalproxy
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: nodelocalproxy
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: nodelocalproxy
+    spec:
+      serviceAccountName: nodelocalproxy
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: nodelocalproxy
+          image: ghcr.io/funcx27/nodelocalproxy:latest
+          args:
+            - --bootstrap-intercept-address=apiserver.example.com:6443
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            capabilities:
+              add: [BPF, NET_ADMIN, SYS_ADMIN]
+              # Fallback: use privileged: true if the runtime cannot grant these capabilities.
+          livenessProbe:
+            exec:
+              command: ["/nodelocalproxy", "status"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: cgroup
+              mountPath: /sys/fs/cgroup
+              readOnly: true        # attach only opens cgroupfs; no writes are needed.
+            - name: btf
+              mountPath: /sys/kernel/btf
+              readOnly: true
+      volumes:
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+            type: Directory
+        - name: btf
+          hostPath:
+            path: /sys/kernel/btf
+            type: Directory
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nodelocalproxy
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nodelocalproxy-config
+  namespace: kube-system
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["nodelocalproxy"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nodelocalproxy-config
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: nodelocalproxy-config
+subjects:
+  - kind: ServiceAccount
+    name: nodelocalproxy
+    namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nodelocalproxy-discovery
+  namespace: default
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    resourceNames: ["kubernetes"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nodelocalproxy-discovery
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: nodelocalproxy-discovery
+subjects:
+  - kind: ServiceAccount
+    name: nodelocalproxy
+    namespace: kube-system

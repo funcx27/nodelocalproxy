@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"os"
@@ -41,22 +41,22 @@ func TestParseEndpoint(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseEndpoint(tc.raw)
+			got, err := ParseEndpoint(tc.raw)
 			if err != nil {
-				t.Fatalf("parseEndpoint: %v", err)
+				t.Fatalf("ParseEndpoint: %v", err)
 			}
-			if got.network != tc.wantNetwork {
-				t.Errorf("network: got %q want %q", got.network, tc.wantNetwork)
+			if got.Network != tc.wantNetwork {
+				t.Errorf("network: got %q want %q", got.Network, tc.wantNetwork)
 			}
-			if got.address != tc.wantAddress {
-				t.Errorf("address: got %q want %q", got.address, tc.wantAddress)
+			if got.Address != tc.wantAddress {
+				t.Errorf("address: got %q want %q", got.Address, tc.wantAddress)
 			}
 		})
 	}
 }
 
 func TestParseEndpointEmpty(t *testing.T) {
-	if _, err := parseEndpoint(""); err == nil {
+	if _, err := ParseEndpoint(""); err == nil {
 		t.Fatal("expected error for empty status endpoint")
 	}
 }
@@ -73,12 +73,12 @@ func TestListenEndpointUnixRemovesStaleSocket(t *testing.T) {
 		t.Fatalf("stale file stat: %v", err)
 	}
 
-	ln, endpoint, err := listenEndpoint("unix://" + path)
+	ln, endpoint, err := ListenEndpoint("unix://" + path)
 	if err != nil {
 		t.Fatalf("listenEndpoint: %v", err)
 	}
 	defer func() {
-		if err := endpoint.cleanup(); err != nil && !os.IsNotExist(err) {
+		if err := endpoint.Cleanup(); err != nil && !os.IsNotExist(err) {
 			t.Fatalf("cleanup: %v", err)
 		}
 	}()
@@ -99,12 +99,12 @@ func TestListenEndpointUnixRemovesStaleSocket(t *testing.T) {
 func TestListenEndpointUnixCreatesSocketDir(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run", "nodelocalproxy", "status.sock")
 
-	ln, endpoint, err := listenEndpoint("unix://" + path)
+	ln, endpoint, err := ListenEndpoint("unix://" + path)
 	if err != nil {
 		t.Fatalf("listenEndpoint: %v", err)
 	}
 	defer func() {
-		if err := endpoint.cleanup(); err != nil && !os.IsNotExist(err) {
+		if err := endpoint.Cleanup(); err != nil && !os.IsNotExist(err) {
 			t.Fatalf("cleanup: %v", err)
 		}
 	}()

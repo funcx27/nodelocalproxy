@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"context"
@@ -10,21 +10,35 @@ import (
 	"time"
 
 	"log/slog"
+
+	"github.com/funcx27/nodelocalproxy/internal/backend"
 )
 
-type proxy struct {
+type Proxy struct {
 	listen   string
 	backends []string
-	pool     *pool
+	pool     *backend.Pool
 	log      *slog.Logger
 
 	// dialTimeout avoids waiting for the kernel TCP timeout before failover.
 	dialTimeout time.Duration
 
-	stats *connectionStats
+	stats *ConnectionStats
 }
 
-func (p *proxy) serve(ctx context.Context, ln net.Listener) error {
+// NewProxy constructs a Proxy with the supplied dependencies.
+func NewProxy(listen string, backends []string, pool *backend.Pool, log *slog.Logger, dialTimeout time.Duration, stats *ConnectionStats) *Proxy {
+	return &Proxy{
+		listen:      listen,
+		backends:    backends,
+		pool:        pool,
+		log:         log,
+		dialTimeout: dialTimeout,
+		stats:       stats,
+	}
+}
+
+func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -37,16 +51,16 @@ func (p *proxy) serve(ctx context.Context, ln net.Listener) error {
 	}
 }
 
-func (p *proxy) handle(ctx context.Context, client net.Conn) {
-	p.stats.open()
+func (p *Proxy) handle(ctx context.Context, client net.Conn) {
+	p.stats.Open()
 	defer p.closeConn(client, "client")
-	defer p.stats.close()
+	defer p.stats.Close()
 	addr := client.RemoteAddr().String()
 
 	for attempt := 0; attempt < len(p.backends); attempt++ {
-		idx := p.pool.nextHealthy()
+		idx := p.pool.NextHealthy()
 		if idx < 0 {
-			p.stats.fail()
+			p.stats.Fail()
 			p.log.Warn("no healthy backend", "client", addr)
 			return
 		}
@@ -55,26 +69,26 @@ func (p *proxy) handle(ctx context.Context, client net.Conn) {
 		d := net.Dialer{Timeout: p.dialTimeout}
 		upstream, err := d.DialContext(ctx, "tcp", b)
 		if err != nil {
-			p.pool.markResult(idx, false, err)
-			p.pool.markBackendConnectFailure(idx)
+			p.pool.MarkResult(idx, false, err)
+			p.pool.MarkBackendConnectFailure(idx)
 			p.log.Debug("backend connect failed, failing over", "backend", b, "client", addr, "err", err)
 			continue
 		}
 
-		p.pool.markResult(idx, true, nil)
-		p.pool.markBackendConnected(idx)
-		p.stats.connect()
+		p.pool.MarkResult(idx, true, nil)
+		p.pool.MarkBackendConnected(idx)
+		p.stats.Connect()
 		p.log.Debug("connected", "backend", b, "client", addr)
 		defer p.closeConn(upstream, "upstream")
-		defer p.pool.markBackendClosed(idx)
+		defer p.pool.MarkBackendClosed(idx)
 		p.relay(client, upstream)
 		return
 	}
-	p.stats.fail()
+	p.stats.Fail()
 	p.log.Warn("all backends failed to connect", "client", addr)
 }
 
-func (p *proxy) relay(a, b net.Conn) {
+func (p *Proxy) relay(a, b net.Conn) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -102,27 +116,29 @@ func closeWrite(c net.Conn) error {
 	return c.Close()
 }
 
-func (p *proxy) closeConn(c net.Conn, side string) {
+func (p *Proxy) closeConn(c net.Conn, side string) {
 	if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		p.log.Debug("connection close failed", "side", side, "err", err)
 	}
 }
 
-type connectionStats struct {
+// ConnectionStats tracks proxy connection counters.
+type ConnectionStats struct {
 	active    atomic.Int64
 	total     atomic.Uint64
 	connected atomic.Uint64
 	failed    atomic.Uint64
 }
 
-type connectionSnapshot struct {
+// ConnectionSnapshot is the read-only view of ConnectionStats.
+type ConnectionSnapshot struct {
 	Active    int64  `json:"active"`
 	Total     uint64 `json:"total"`
 	Connected uint64 `json:"connected"`
 	Failed    uint64 `json:"failed"`
 }
 
-func (s *connectionStats) open() {
+func (s *ConnectionStats) Open() {
 	if s == nil {
 		return
 	}
@@ -130,32 +146,32 @@ func (s *connectionStats) open() {
 	s.total.Add(1)
 }
 
-func (s *connectionStats) close() {
+func (s *ConnectionStats) Close() {
 	if s == nil {
 		return
 	}
 	s.active.Add(-1)
 }
 
-func (s *connectionStats) connect() {
+func (s *ConnectionStats) Connect() {
 	if s == nil {
 		return
 	}
 	s.connected.Add(1)
 }
 
-func (s *connectionStats) fail() {
+func (s *ConnectionStats) Fail() {
 	if s == nil {
 		return
 	}
 	s.failed.Add(1)
 }
 
-func (s *connectionStats) snapshot() connectionSnapshot {
+func (s *ConnectionStats) Snapshot() ConnectionSnapshot {
 	if s == nil {
-		return connectionSnapshot{}
+		return ConnectionSnapshot{}
 	}
-	return connectionSnapshot{
+	return ConnectionSnapshot{
 		Active:    s.active.Load(),
 		Total:     s.total.Load(),
 		Connected: s.connected.Load(),

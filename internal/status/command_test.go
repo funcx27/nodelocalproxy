@@ -1,4 +1,4 @@
-package main
+package status
 
 import (
 	"bytes"
@@ -12,22 +12,35 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/funcx27/nodelocalproxy/internal/backend"
+	"github.com/funcx27/nodelocalproxy/internal/proxy"
 )
+
+func markAllHealthy(p *backend.Pool) {
+	for _, s := range p.States {
+		s.Mu.Lock()
+		s.Health = backend.HealthHealthy
+		s.Mu.Unlock()
+	}
+}
 
 func TestRunStatusCommandPrintsTable(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "status.sock")
-	closeServer := serveStatusFixture(t, socket, healthResponse{
+	lastCheck := time.Date(2026, 7, 27, 14, 12, 24, 0, time.FixedZone("CST", 8*60*60))
+	lastSuccess := time.Date(2026, 7, 27, 14, 12, 21, 0, time.FixedZone("CST", 8*60*60))
+	closeServer := serveStatusFixture(t, socket, HealthResponse{
 		Status:                "degraded",
 		Listen:                "127.0.0.1:16443",
 		Uptime:                125,
 		BackendConnectTimeout: "300ms",
-		Connections: connectionSnapshot{
+		Connections: proxy.ConnectionSnapshot{
 			Active:    1,
 			Total:     12,
 			Connected: 10,
 			Failed:    2,
 		},
-		HealthCheck: healthCheckSnapshot{
+		HealthCheck: HealthCheckSnapshot{
 			Type:             "http",
 			Path:             "/readyz",
 			Interval:         "3s",
@@ -35,23 +48,22 @@ func TestRunStatusCommandPrintsTable(t *testing.T) {
 			FailureThreshold: 2,
 			SuccessThreshold: 1,
 		},
-		Backends: []backendSnapshot{
+		Backends: []backend.BackendSnapshot{
 			{
 				Index:       0,
 				Address:     "10.0.0.1:6443",
 				Health:      "healthy",
-				Fails:       0,
-				Success:     3,
-				Connections: backendConnectionSnapshot{Active: 1, Total: 7, Failed: 0},
+				LastCheck:   lastCheck,
+				LastSuccess: lastSuccess,
+				Connections: backend.BackendConnectionSnapshot{Active: 1, Total: 7, Failed: 0},
 			},
 			{
 				Index:       1,
 				Address:     "10.0.0.2:6443",
 				Health:      "unhealthy",
-				Fails:       2,
-				Success:     0,
 				LastErr:     "connection refused",
-				Connections: backendConnectionSnapshot{Active: 0, Total: 3, Failed: 2},
+				LastCheck:   lastCheck,
+				Connections: backend.BackendConnectionSnapshot{Active: 0, Total: 3, Failed: 2},
 			},
 		},
 	})
@@ -60,7 +72,7 @@ func TestRunStatusCommandPrintsTable(t *testing.T) {
 
 	var out bytes.Buffer
 	var stderr bytes.Buffer
-	err := runStatusCommand([]string{"--config", configPath}, &out, &stderr)
+	err := RunCommand([]string{"--config", configPath}, &out, &stderr)
 	if err != nil {
 		t.Fatalf("run status command: %v", err)
 	}
@@ -74,9 +86,12 @@ func TestRunStatusCommandPrintsTable(t *testing.T) {
 		"Uptime: 2m5s",
 		"Connections: 1/12/2 (ACTIVE/TOTAL/FAILED)",
 		"Health check: http /readyz",
+		"LAST_CHECK",
+		"LAST_SUCCESS",
 		"10.0.0.1:6443",
 		"OK",
 		"1/7/0",
+		"2026-07-27T14:12:24+08:00",
 		"10.0.0.2:6443",
 		"BAD",
 		"0/3/2",
@@ -89,13 +104,27 @@ func TestRunStatusCommandPrintsTable(t *testing.T) {
 	if strings.Contains(got, "INDEX") {
 		t.Fatalf("output should not include INDEX column:\n%s", got)
 	}
+	for _, removed := range []string{"FAILS", "\tSUCCESS\t"} {
+		if strings.Contains(got, removed) {
+			t.Fatalf("output should not include %s column:\n%s", removed, got)
+		}
+	}
+}
+
+func TestFormatAgo(t *testing.T) {
+	if got := formatAgo(time.Time{}); got != "-" {
+		t.Fatalf("zero time: got %q want -", got)
+	}
+	if got := formatAgo(time.Now().Add(5 * time.Second)); got != "0s" {
+		t.Fatalf("future time: got %q want 0s", got)
+	}
 }
 
 func TestRunStatusCommandPrintsRawJSON(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "status.sock")
-	closeServer := serveStatusFixture(t, socket, healthResponse{
+	closeServer := serveStatusFixture(t, socket, HealthResponse{
 		Status: "ok",
-		Backends: []backendSnapshot{
+		Backends: []backend.BackendSnapshot{
 			{Index: 0, Address: "10.0.0.1:6443", Health: "healthy"},
 		},
 	})
@@ -104,12 +133,12 @@ func TestRunStatusCommandPrintsRawJSON(t *testing.T) {
 
 	var out bytes.Buffer
 	var stderr bytes.Buffer
-	err := runStatusCommand([]string{"--config", configPath, "--json"}, &out, &stderr)
+	err := RunCommand([]string{"--config", configPath, "--json"}, &out, &stderr)
 	if err != nil {
 		t.Fatalf("run status command: %v", err)
 	}
 
-	var got healthResponse
+	var got HealthResponse
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode raw JSON: %v\n%s", err, out.String())
 	}
@@ -120,9 +149,9 @@ func TestRunStatusCommandPrintsRawJSON(t *testing.T) {
 
 func TestPrintHealthTableShowsZeroConnections(t *testing.T) {
 	var out bytes.Buffer
-	err := printHealthTable(&out, healthResponse{
+	err := printHealthTable(&out, HealthResponse{
 		Status: "ok",
-		Backends: []backendSnapshot{
+		Backends: []backend.BackendSnapshot{
 			{Index: 0, Address: "10.0.0.1:6443", Health: "healthy"},
 		},
 	})
@@ -135,9 +164,9 @@ func TestPrintHealthTableShowsZeroConnections(t *testing.T) {
 }
 
 func TestRunStatusCommandSupportsTCPStatusEndpoint(t *testing.T) {
-	srv := httptest.NewServer(statusFixtureHandler(t, healthResponse{
+	srv := httptest.NewServer(statusFixtureHandler(t, HealthResponse{
 		Status: "ok",
-		Backends: []backendSnapshot{
+		Backends: []backend.BackendSnapshot{
 			{Index: 0, Address: "10.0.0.1:6443", Health: "healthy"},
 		},
 	}))
@@ -147,7 +176,7 @@ func TestRunStatusCommandSupportsTCPStatusEndpoint(t *testing.T) {
 
 	var out bytes.Buffer
 	var stderr bytes.Buffer
-	err := runStatusCommand([]string{"--config", configPath}, &out, &stderr)
+	err := RunCommand([]string{"--config", configPath}, &out, &stderr)
 	if err != nil {
 		t.Fatalf("run status command: %v", err)
 	}
@@ -166,7 +195,7 @@ func TestValidateUnixSocketRejectsRegularFile(t *testing.T) {
 	}
 }
 
-func serveStatusFixture(t *testing.T, socket string, health healthResponse) func() {
+func serveStatusFixture(t *testing.T, socket string, health HealthResponse) func() {
 	t.Helper()
 
 	ln, err := net.Listen("unix", socket)
@@ -194,7 +223,7 @@ func serveStatusFixture(t *testing.T, socket string, health healthResponse) func
 	}
 }
 
-func statusFixtureHandler(t *testing.T, health healthResponse) http.Handler {
+func statusFixtureHandler(t *testing.T, health HealthResponse) http.Handler {
 	t.Helper()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

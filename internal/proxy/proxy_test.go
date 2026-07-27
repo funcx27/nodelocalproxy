@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"context"
@@ -12,6 +12,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/funcx27/nodelocalproxy/internal/backend"
+	"github.com/funcx27/nodelocalproxy/internal/config"
 )
 
 func quietLogger() *slog.Logger {
@@ -45,21 +48,21 @@ func startEcho(t *testing.T) (net.Listener, func()) {
 	}
 }
 
-func markAllHealthy(p *pool) {
-	for _, s := range p.states {
-		s.mu.Lock()
-		s.health = healthHealthy
-		s.mu.Unlock()
+func markAllHealthy(p *backend.Pool) {
+	for _, s := range p.States {
+		s.Mu.Lock()
+		s.Health = backend.HealthHealthy
+		s.Mu.Unlock()
 	}
 }
 
-func startProxy(t *testing.T, p *proxy, ln net.Listener) {
+func startProxy(t *testing.T, p *Proxy, ln net.Listener) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- p.serve(ctx, ln)
+		serveErr <- p.Serve(ctx, ln)
 	}()
 
 	t.Cleanup(func() {
@@ -88,13 +91,13 @@ func TestProxyFailover(t *testing.T) {
 		t.Fatalf("proxy listen: %v", err)
 	}
 
-	p := &proxy{
+	p := &Proxy{
 		listen:      ln.Addr().String(),
 		dialTimeout: 500 * time.Millisecond,
 		backends:    []string{deadAddr, echoAddr},
-		pool:        newPool([]string{deadAddr, echoAddr}),
+		pool:        backend.NewPool([]string{deadAddr, echoAddr}),
 		log:         quietLogger(),
-		stats:       &connectionStats{},
+		stats:       &ConnectionStats{},
 	}
 	markAllHealthy(p.pool)
 	startProxy(t, p, ln)
@@ -115,7 +118,7 @@ func TestProxyFailover(t *testing.T) {
 	if string(buf) != payload {
 		t.Fatalf("echo mismatch: got %q", buf)
 	}
-	stats := p.stats.snapshot()
+	stats := p.stats.Snapshot()
 	if stats.Total != 1 {
 		t.Fatalf("stats total: got %d want 1", stats.Total)
 	}
@@ -125,7 +128,7 @@ func TestProxyFailover(t *testing.T) {
 	if stats.Failed != 0 {
 		t.Fatalf("stats failed: got %d want 0", stats.Failed)
 	}
-	backends := p.pool.snapshot()
+	backends := p.pool.Snapshot()
 	if backends[0].Connections.Failed != 1 {
 		t.Fatalf("dead backend failed connections: got %d want 1", backends[0].Connections.Failed)
 	}
@@ -147,13 +150,13 @@ func TestProxyAllDown(t *testing.T) {
 		t.Fatalf("proxy listen: %v", err)
 	}
 
-	p := &proxy{
+	p := &Proxy{
 		listen:      ln.Addr().String(),
 		dialTimeout: 300 * time.Millisecond,
 		backends:    []string{deadAddr},
-		pool:        newPool([]string{deadAddr}),
+		pool:        backend.NewPool([]string{deadAddr}),
 		log:         quietLogger(),
-		stats:       &connectionStats{},
+		stats:       &ConnectionStats{},
 	}
 	markAllHealthy(p.pool)
 	startProxy(t, p, ln)
@@ -174,7 +177,7 @@ func TestProxyAllDown(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("proxy hung instead of closing the client connection")
 	}
-	stats := p.stats.snapshot()
+	stats := p.stats.Snapshot()
 	if stats.Total != 1 {
 		t.Fatalf("stats total: got %d want 1", stats.Total)
 	}
@@ -184,7 +187,7 @@ func TestProxyAllDown(t *testing.T) {
 	if stats.Failed != 1 {
 		t.Fatalf("stats failed: got %d want 1", stats.Failed)
 	}
-	backends := p.pool.snapshot()
+	backends := p.pool.Snapshot()
 	if backends[0].Connections.Failed != 1 {
 		t.Fatalf("backend failed connections: got %d want 1", backends[0].Connections.Failed)
 	}
@@ -203,7 +206,7 @@ func TestHealthCheckHTTP(t *testing.T) {
 
 	okAddr := stripHost(okSrv.Listener.Addr().String())
 	badAddr := stripHost(badSrv.Listener.Addr().String())
-	hc := HealthCheck{
+	hc := config.HealthCheck{
 		Type:               "http",
 		Path:               "/readyz",
 		InsecureSkipVerify: true,
@@ -212,22 +215,22 @@ func TestHealthCheckHTTP(t *testing.T) {
 		FailureThreshold:   1,
 		SuccessThreshold:   1,
 	}
-	p := newPool([]string{okAddr, badAddr})
-	ch := newChecker(p, []string{okAddr, badAddr}, hc, quietLogger())
+	p := backend.NewPool([]string{okAddr, badAddr})
+	ch := backend.NewChecker(p, []string{okAddr, badAddr}, hc, quietLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go ch.run(ctx)
+	go ch.Run(ctx)
 
 	deadline := time.Now().Add(1500 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		p.states[0].mu.Lock()
-		h0 := p.states[0].health
-		p.states[0].mu.Unlock()
-		p.states[1].mu.Lock()
-		h1 := p.states[1].health
-		p.states[1].mu.Unlock()
-		if h0 == healthHealthy && h1 == healthUnhealthy {
+		p.States[0].Mu.Lock()
+		h0 := p.States[0].Health
+		p.States[0].Mu.Unlock()
+		p.States[1].Mu.Lock()
+		h1 := p.States[1].Health
+		p.States[1].Mu.Unlock()
+		if h0 == backend.HealthHealthy && h1 == backend.HealthUnhealthy {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

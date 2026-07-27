@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt vet builder docker-build docker-push clean release-tarballs
+.PHONY: build test lint fmt vet builder docker-build docker-push clean release-tarballs ebpf-vmlinux ebpf-generate run-ebpf-cgroup
 
 BINARY := nodelocalproxy
 VERSION ?= dev
@@ -8,6 +8,9 @@ PLATFORMS ?= linux/amd64,linux/arm64
 BUILDER ?= mybuilder
 PROXY ?= http://127.0.0.1:10808
 COMPRESSION ?= zstd
+CONFIG ?= example-config.yaml
+EBPF_RUN_CGROUP ?= nodelocalproxy
+EBPF_RUN_UNIT ?= nodelocalproxy
 
 export http_proxy := $(PROXY)
 export https_proxy := $(PROXY)
@@ -20,9 +23,37 @@ export HTTPS_PROXY := $(PROXY)
 LDFLAGS := -s -w
 GOFLAGS := -trimpath
 
-# build the host-arch binary into bin/ (fast, debug-friendly).
+# build the host-arch binary into bin/. The default binary supports both
+# userspace and ebpf-transparent modes; ebpf-transparent still performs runtime
+# preflight and fails fast on unsupported nodes.
 build:
-	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o bin/$(BINARY) .
+	CGO_ENABLED=0 go build $(GOFLAGS) -tags ebpf -ldflags="$(LDFLAGS)" -o bin/$(BINARY) .
+
+# ebpf-vmlinux regenerates internal/ebpf/headers/vmlinux.h from the running
+# kernel's BTF. Requires bpftool + a BTF-capable kernel (/sys/kernel/btf/vmlinux).
+# Only needed when targeting a different kernel; the committed vmlinux.h is the
+# default and ebpf-generate work without re-running this.
+ebpf-vmlinux:
+	mkdir -p internal/ebpf/headers
+	bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/ebpf/headers/vmlinux.h
+
+# ebpf-generate runs `go generate` against the eBPF package — regenerates the
+# committed prebuilt object/source assets under internal/ebpf/. Requires clang
+# on PATH and the committed vmlinux.h (or run ebpf-vmlinux first); the committed
+# assets let a normal `go build` skip this step.
+ebpf-generate: ebpf-vmlinux
+	go generate -tags ebpf ./internal/ebpf/
+
+# run-ebpf-cgroup starts the local binary in its own cgroup. This keeps the
+# daemon's self-exempt cgroup separate from the shell used for smoke traffic.
+run-ebpf-cgroup: build
+	@if command -v systemd-run >/dev/null 2>&1 && systemctl show-environment >/dev/null 2>&1; then \
+		echo ">> starting $(BINARY) in transient systemd scope $(EBPF_RUN_UNIT)"; \
+		sudo systemd-run --scope --collect --unit=$(EBPF_RUN_UNIT) ./bin/$(BINARY) --config "$(CONFIG)"; \
+	else \
+		echo ">> starting $(BINARY) in cgroup /sys/fs/cgroup/$(EBPF_RUN_CGROUP)"; \
+		sudo sh -c 'set -eu; cg="/sys/fs/cgroup/$$1"; shift; mkdir -p "$$cg"; echo $$$$ > "$$cg/cgroup.procs"; exec "$$@"' sh "$(EBPF_RUN_CGROUP)" ./bin/$(BINARY) --config "$(CONFIG)"; \
+	fi
 
 # test runs the unit tests with the race detector to catch pool/proxy races.
 # The race detector requires cgo, so test is exempt from the CGO_ENABLED=0 used
@@ -75,7 +106,7 @@ release-tarballs:
 	@for arch in amd64 arm64; do \
 		echo ">> building $(BINARY) $(VERSION) linux/$$arch"; \
 		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch \
-			go build $(GOFLAGS) -ldflags="$(LDFLAGS)" \
+			go build $(GOFLAGS) -tags ebpf -ldflags="$(LDFLAGS)" \
 			-o $(DIST)/$(BINARY)_$(VERSION)_linux_$$arch . || exit 1; \
 		tar -C $(DIST) -czf $(DIST)/$(BINARY)_$(VERSION)_linux_$$arch.tar.gz \
 			$(BINARY)_$(VERSION)_linux_$$arch || exit 1; \

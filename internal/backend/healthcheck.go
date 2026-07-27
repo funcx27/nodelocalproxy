@@ -1,4 +1,4 @@
-package main
+package backend
 
 import (
 	"context"
@@ -10,20 +10,22 @@ import (
 	"time"
 
 	"log/slog"
+
+	"github.com/funcx27/nodelocalproxy/internal/config"
 )
 
-type checker struct {
-	pool     *pool
+type Checker struct {
+	pool     *Pool
 	backends []string
-	hc       HealthCheck
+	hc       config.HealthCheck
 	log      *slog.Logger
 }
 
-func newChecker(p *pool, backends []string, hc HealthCheck, log *slog.Logger) *checker {
-	return &checker{pool: p, backends: backends, hc: hc, log: log}
+func NewChecker(p *Pool, backends []string, hc config.HealthCheck, log *slog.Logger) *Checker {
+	return &Checker{pool: p, backends: backends, hc: hc, log: log}
 }
 
-func (c *checker) run(ctx context.Context) {
+func (c *Checker) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	for _, addr := range c.backends {
 		wg.Add(1)
@@ -35,7 +37,7 @@ func (c *checker) run(ctx context.Context) {
 	wg.Wait()
 }
 
-func (c *checker) loop(ctx context.Context, addr string) {
+func (c *Checker) loop(ctx context.Context, addr string) {
 	t := time.NewTicker(c.hc.Interval)
 	defer t.Stop()
 
@@ -50,7 +52,7 @@ func (c *checker) loop(ctx context.Context, addr string) {
 	}
 }
 
-func (c *checker) probe(ctx context.Context, addr string) {
+func (c *Checker) probe(ctx context.Context, addr string) {
 	hc := c.hc
 	pctx, cancel := context.WithTimeout(ctx, hc.Timeout)
 	defer cancel()
@@ -62,38 +64,39 @@ func (c *checker) probe(ctx context.Context, addr string) {
 	err := c.doProbe(pctx, addr)
 	now := time.Now()
 
-	s := c.pool.states[idx]
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.lastCheck = now
+	s := c.pool.States[idx]
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	s.LastCheck = now
 
 	if err == nil {
-		s.success++
-		s.fails = 0
-		s.lastErr = ""
-		if s.success >= hc.SuccessThreshold {
-			previous := s.health
-			s.health = healthHealthy
-			if previous != healthHealthy {
+		s.Success++
+		s.Fails = 0
+		s.LastErr = ""
+		s.LastSuccess = now
+		if s.Success >= hc.SuccessThreshold {
+			previous := s.Health
+			s.Health = HealthHealthy
+			if previous != HealthHealthy {
 				c.log.Info("backend recovered", "backend", addr, "index", idx)
 			}
 		}
 		return
 	}
 
-	s.fails++
-	s.success = 0
-	s.lastErr = errToString(err)
-	if s.fails >= hc.FailureThreshold {
-		previous := s.health
-		s.health = healthUnhealthy
-		if previous != healthUnhealthy {
-			c.log.Warn("backend unhealthy", "backend", addr, "index", idx, "err", err, "consecutive", s.fails)
+	s.Fails++
+	s.Success = 0
+	s.LastErr = errToString(err)
+	if s.Fails >= hc.FailureThreshold {
+		previous := s.Health
+		s.Health = HealthUnhealthy
+		if previous != HealthUnhealthy {
+			c.log.Warn("backend unhealthy", "backend", addr, "index", idx, "err", err, "consecutive", s.Fails)
 		}
 	}
 }
 
-func (c *checker) doProbe(ctx context.Context, addr string) error {
+func (c *Checker) doProbe(ctx context.Context, addr string) error {
 	switch c.hc.Type {
 	case "tcp":
 		return c.doTCPProbe(ctx, addr)
@@ -102,7 +105,7 @@ func (c *checker) doProbe(ctx context.Context, addr string) error {
 	}
 }
 
-func (c *checker) doTCPProbe(ctx context.Context, addr string) error {
+func (c *Checker) doTCPProbe(ctx context.Context, addr string) error {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
@@ -114,7 +117,7 @@ func (c *checker) doTCPProbe(ctx context.Context, addr string) error {
 	return nil
 }
 
-func (c *checker) doHTTPProbe(ctx context.Context, addr string) error {
+func (c *Checker) doHTTPProbe(ctx context.Context, addr string) error {
 	client := &http.Client{
 		Timeout: 0, // governed by ctx
 		Transport: &http.Transport{

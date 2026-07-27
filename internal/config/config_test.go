@@ -1,8 +1,10 @@
-package main
+package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,9 +25,9 @@ listen: 127.0.0.1:16443
 backends:
   - 192.168.100.20:6443
 `)
-	cfg, err := loadConfig(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+		t.Fatalf("LoadConfig: %v", err)
 	}
 	if cfg.BackendConnectTimeout != 300*time.Millisecond {
 		t.Errorf("backendConnectTimeout: got %v want 300ms", cfg.BackendConnectTimeout)
@@ -64,9 +66,9 @@ status: tcp://127.0.0.1:16444
 backends:
   - 192.168.100.20:6443
 `)
-	cfg, err := loadConfig(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+		t.Fatalf("LoadConfig: %v", err)
 	}
 	if cfg.Status != "tcp://127.0.0.1:16444" {
 		t.Errorf("status: got %q want tcp://127.0.0.1:16444", cfg.Status)
@@ -82,9 +84,9 @@ healthCheck:
 backends:
   - 192.168.100.20:6443
 `)
-	cfg, err := loadConfig(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+		t.Fatalf("LoadConfig: %v", err)
 	}
 	hc := cfg.HealthCheck
 	if hc.Type != "http" {
@@ -117,9 +119,9 @@ backendConnectTimeout: 150ms
 backends:
   - 192.168.100.20:6443
 `)
-	cfg, err := loadConfig(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+		t.Fatalf("LoadConfig: %v", err)
 	}
 	if cfg.BackendConnectTimeout != 150*time.Millisecond {
 		t.Errorf("backendConnectTimeout: got %v want 150ms", cfg.BackendConnectTimeout)
@@ -133,9 +135,9 @@ backends:
   - 192.168.100.20:6443
   - 192.168.100.21:6443
 `)
-	cfg, err := loadConfig(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+		t.Fatalf("LoadConfig: %v", err)
 	}
 	if len(cfg.Backends) != 2 {
 		t.Fatalf("backends: got %d want 2", len(cfg.Backends))
@@ -163,10 +165,63 @@ func TestConfigValidateErrors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeConfig(t, tc.yaml)
-			_, err := loadConfig(path)
+			_, err := LoadConfig(path)
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestModeDefaultsToUserspace(t *testing.T) {
+	path := writeConfig(t, "listen: 127.0.0.1:16443\nbackends: [\"192.168.100.20:6443\"]\n")
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Mode != "" && cfg.Mode != "userspace" {
+		t.Errorf("mode: got %q", cfg.Mode)
+	}
+}
+
+func TestEbpfModeRequiresIntercept(t *testing.T) {
+	path := writeConfig(t, "mode: ebpf-transparent\nbackends: [\"192.168.100.20:6443\"]\n")
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("expected intercept.address error, got nil")
+	}
+}
+
+func TestEbpfModeDoesNotRequireListen(t *testing.T) {
+	path := writeConfig(t, `
+mode: ebpf-transparent
+intercept:
+  address: apiserver.example.com:6443
+backends: ["192.168.100.20:6443"]
+`)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.IsEbpfMode() {
+		t.Fatal("expected ebpf mode")
+	}
+}
+
+func TestBadModeRejected(t *testing.T) {
+	path := writeConfig(t, "mode: bogus\nlisten: 127.0.0.1:1\nbackends: [\"x:6443\"]\n")
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("expected mode error")
+	}
+}
+
+func TestBackendCountLimit(t *testing.T) {
+	var lines []string
+	lines = append(lines, "mode: ebpf-transparent", "intercept:", "  address: a.example:6443", "backends:")
+	for i := 0; i < 17; i++ {
+		lines = append(lines, fmt.Sprintf("  - 10.0.0.%d:6443", i))
+	}
+	path := writeConfig(t, strings.Join(lines, "\n"))
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("expected backend count error")
 	}
 }
