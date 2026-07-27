@@ -33,7 +33,6 @@ struct {
     __type(value, __u64);
 } self_cgid SEC(".maps");
 
-const volatile __u16 intercept_port = 0;  /* network order */
 const volatile __u32 backend_count  = 0;
 
 SEC("cgroup/connect4")
@@ -44,9 +43,6 @@ int cgroup_connect4(struct bpf_sock_addr *ctx)
     __u64 *self = bpf_map_lookup_elem(&self_cgid, &zero);
     if (self && *self == bpf_get_current_cgroup_id())
         return 1; /* exempt daemon's own cgroup */
-
-    if (ctx->user_port != intercept_port)
-        return 1; /* not an apiserver port */
 
     __u32 bound = backend_count;
     if (bound > MAX_BACKENDS)

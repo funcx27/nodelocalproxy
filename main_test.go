@@ -23,7 +23,7 @@ func writeConfigHelper(t *testing.T, content string) string {
 // TestEbpfConfigDoesNotRequireListen guards the routing branch in run(): an
 // ebpf-mode config has no listen address, yet must load and report ebpf mode.
 func TestEbpfConfigDoesNotRequireListen(t *testing.T) {
-	path := writeConfigHelper(t, "mode: ebpf-transparent\nintercept:\n  address: a.example:6443\nbackends: [\"1.2.3.4:6443\"]\n")
+	path := writeConfigHelper(t, "mode: ebpf-transparent\nbackends: [\"1.2.3.4:6443\"]\n")
 	cfg, err := config.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)

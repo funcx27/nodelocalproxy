@@ -4,7 +4,6 @@ package ebpf
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"net"
@@ -94,13 +93,6 @@ func (r *Runtime) publish() {
 }
 
 func Run(ctx context.Context, cfg *config.Config, pool *backend.Pool, log *slog.Logger) error {
-	_, portStr, err := net.SplitHostPort(cfg.Intercept.Address)
-	if err != nil {
-		return fmt.Errorf("intercept.address: %w", err)
-	}
-	var interceptPort uint16
-	fmt.Sscanf(portStr, "%d", &interceptPort)
-
 	parsed, err := parseBackends(cfg.Backends)
 	if err != nil {
 		return err
@@ -109,7 +101,7 @@ func Run(ctx context.Context, cfg *config.Config, pool *backend.Pool, log *slog.
 	for i, p := range parsed {
 		ports[i] = p.port
 	}
-	pfResult, err := preflight.Run(interceptPort, ports)
+	pfResult, err := preflight.Run(ports)
 	if err != nil {
 		return err
 	}
@@ -121,11 +113,6 @@ func Run(ctx context.Context, cfg *config.Config, pool *backend.Pool, log *slog.
 	spec, err := LoadNlp()
 	if err != nil {
 		return fmt.Errorf("load bpf spec: %w", err)
-	}
-	if v := spec.Variables["intercept_port"]; v == nil {
-		return fmt.Errorf("bpf variable intercept_port missing")
-	} else if err := v.Set(htons(interceptPort)); err != nil {
-		return fmt.Errorf("set intercept_port: %w", err)
 	}
 	if v := spec.Variables["backend_count"]; v == nil {
 		return fmt.Errorf("bpf variable backend_count missing")
@@ -232,20 +219,4 @@ func (r *Runtime) Close() error {
 	// probe, status command, integration tests) see a stale "attached" state.
 	r.publish()
 	return nil
-}
-
-// htons yields the value that, when stored in the host-native byte order used
-// by VariableSpec.Set and then read by the BPF program on a little-endian
-// target, matches bpf_sock_addr.user_port. user_port is a __u32 in network
-// (big-endian) byte order; for a given port the BPF side reads it as the low
-// __u16 0xA046 (for port 18080 = 0x46A0), so intercept_port must hold the
-// identical bit pattern 0xA046.
-//
-// RESOLVED by the integration test (TestIntegrationConnectRewritten): this
-// swap form is correct — confirmed by the all-unhealthy → connect denied and
-// the A-unhealthy → failover-to-B disambiguation. Do NOT change to identity.
-func htons(v uint16) uint16 {
-	var b [2]byte
-	binary.BigEndian.PutUint16(b[:], v)
-	return binary.LittleEndian.Uint16(b[:])
 }

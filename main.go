@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -41,12 +40,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	var (
-		configPath                string
-		logLevel                  string
-		bootstrapConfigMapNS      string
-		bootstrapConfigMapName    string
-		bootstrapConfigMapKey     string
-		bootstrapInterceptAddress string
+		configPath             string
+		logLevel               string
+		bootstrapConfigMapNS   string
+		bootstrapConfigMapName string
+		bootstrapConfigMapKey  string
 	)
 	fs := flag.NewFlagSet("nodelocalproxy", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -55,7 +53,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.StringVar(&bootstrapConfigMapNS, "bootstrap-configmap-namespace", "", "namespace for bootstrap ConfigMap; defaults to pod namespace or kube-system")
 	fs.StringVar(&bootstrapConfigMapName, "bootstrap-configmap-name", bootstrap.DefaultConfigMapName, "name for bootstrap ConfigMap")
 	fs.StringVar(&bootstrapConfigMapKey, "bootstrap-configmap-key", bootstrap.DefaultConfigMapKey, "data key for bootstrap ConfigMap")
-	fs.StringVar(&bootstrapInterceptAddress, "bootstrap-intercept-address", "", "intercept host:port used when bootstrap creates a missing ConfigMap")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -66,7 +63,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 		ConfigMapNamespace: bootstrapConfigMapNS,
 		ConfigMapName:      bootstrapConfigMapName,
 		ConfigMapKey:       bootstrapConfigMapKey,
-		InterceptAddress:   bootstrapInterceptAddress,
 	})
 	if err != nil {
 		return err
@@ -110,7 +106,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if cfg.IsEbpfMode() {
-		log.Info("starting eBPF transparent mode", "intercept", cfg.Intercept.Address)
+		log.Info("starting eBPF transparent mode")
 		return ebpf.Run(ctx, cfg, pool, log)
 	}
 
@@ -161,13 +157,10 @@ func ebpfStatusClosure(cfg *config.Config) func() *status.EbpfStatus {
 	if !cfg.IsEbpfMode() {
 		return nil
 	}
-	interceptPort := parseInterceptPort(cfg.Intercept.Address)
 	return func() *status.EbpfStatus {
 		s := ebpf.Status()
 		return &status.EbpfStatus{
-			Intercept:     cfg.Intercept.Address,
-			InterceptPort: interceptPort,
-			Preflight:     s.Preflight,
+			Preflight: s.Preflight,
 			BPF: &status.BpfStatus{
 				Attached:         s.Attached,
 				AttachType:       "cgroup/connect4",
@@ -180,20 +173,6 @@ func ebpfStatusClosure(cfg *config.Config) func() *status.EbpfStatus {
 			},
 		}
 	}
-}
-
-// parseInterceptPort extracts the port from a host:port intercept address.
-// Returns 0 if the address cannot be parsed.
-func parseInterceptPort(addr string) int {
-	_, portStr, err := net.SplitHostPort(addr)
-	if err != nil {
-		return 0
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return 0
-	}
-	return port
 }
 
 func newLogger(level string) *slog.Logger {

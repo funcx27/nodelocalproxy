@@ -3,7 +3,6 @@ package config
 import (
 	_ "embed"
 	"fmt"
-	"net"
 	"os"
 	"time"
 
@@ -23,12 +22,6 @@ type Config struct {
 	HealthCheck           HealthCheck   `yaml:"healthCheck"`
 	Backends              []string      `yaml:"backends"`
 	Mode                  string        `yaml:"mode"`
-	Intercept             Intercept     `yaml:"intercept"`
-}
-
-// Intercept configures the eBPF transparent-connect hook.
-type Intercept struct {
-	Address string `yaml:"address"`
 }
 
 // IsEbpfMode reports whether the proxy is running in eBPF transparent-connect mode.
@@ -93,12 +86,6 @@ func (c *Config) validateUserspace() error {
 }
 
 func (c *Config) validateEbpf() error {
-	if c.Intercept.Address == "" {
-		return fmt.Errorf("intercept.address is required (ebpf-transparent mode)")
-	}
-	if _, _, err := net.SplitHostPort(c.Intercept.Address); err != nil {
-		return fmt.Errorf("intercept.address %q: %w", c.Intercept.Address, err)
-	}
 	return c.validateBackendsCommon(false)
 }
 

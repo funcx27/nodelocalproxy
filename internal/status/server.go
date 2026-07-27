@@ -30,8 +30,6 @@ type HealthResponse struct {
 	HealthCheck           HealthCheckSnapshot       `json:"healthCheck"`
 	Connections           proxy.ConnectionSnapshot  `json:"connections"`
 	Backends              []backend.BackendSnapshot `json:"backends"`
-	Intercept             string                    `json:"intercept,omitempty"`
-	InterceptPort         int                       `json:"interceptPort,omitempty"`
 	Preflight             *preflight.Result         `json:"preflight,omitempty"`
 	BPF                   *BpfStatus                `json:"bpf,omitempty"`
 }
@@ -39,10 +37,8 @@ type HealthResponse struct {
 // EbpfStatus is the JSON view of the eBPF-mode runtime state. Populated only
 // when the server is wired with an EbpfStatus closure (i.e. ebpf mode).
 type EbpfStatus struct {
-	Intercept     string            `json:"intercept"`
-	InterceptPort int               `json:"interceptPort"`
-	Preflight     *preflight.Result `json:"preflight"`
-	BPF           *BpfStatus        `json:"bpf"`
+	Preflight *preflight.Result `json:"preflight"`
+	BPF       *BpfStatus        `json:"bpf"`
 }
 
 // BpfStatus is the JSON view of the eBPF runtime snapshot.
@@ -102,8 +98,6 @@ func (s *Server) HandleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 	if s.EbpfStatus != nil {
 		if es := s.EbpfStatus(); es != nil {
-			resp.Intercept = es.Intercept
-			resp.InterceptPort = es.InterceptPort
 			resp.Preflight = es.Preflight
 			resp.BPF = es.BPF
 		}

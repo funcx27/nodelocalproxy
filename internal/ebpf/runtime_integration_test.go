@@ -26,16 +26,12 @@ import (
 // connects from any process on the host to these backend addrs are rewritten.
 // ebpf.Run is always cancelled / Closed at the end (detach).
 
-// All loopback addresses (127.0.0.0/8) route to the local host, so the two
-// backends use distinct 127.x IPs on the SAME port (preflight requires every
-// backend port to equal the intercept port — they are apiserver peers). The
-// BPF rewrite targets IP+port, so dialing 127.0.0.1:18080 and being rewritten
-// to 127.0.0.2:18080 is observable by which echo server answers.
+// All loopback addresses (127.0.0.0/8) route to the local host. The BPF rewrite
+// targets IP+port, so dialing 127.0.0.1:18080 and being rewritten to
+// 127.0.0.2:18080 is observable by which echo server answers.
 const (
 	itBEA = "127.0.0.1:18080"
 	itBEB = "127.0.0.2:18080"
-
-	itIntercept = "apiserver.example.com:18080"
 )
 
 // startEcho starts a TCP listener that echoes id on every accepted connection
@@ -143,9 +139,8 @@ func startRuntime(t *testing.T, cfg *config.Config, pool *backend.Pool) func() {
 
 func itConfig() *config.Config {
 	return &config.Config{
-		Mode:      "ebpf-transparent",
-		Intercept: config.Intercept{Address: itIntercept},
-		Backends:  []string{itBEA, itBEB},
+		Mode:     "ebpf-transparent",
+		Backends: []string{itBEA, itBEB},
 	}
 }
 
@@ -194,7 +189,7 @@ func TestIntegrationConnectRewritten(t *testing.T) {
 		t.Fatalf("dial A (A unhealthy): %v", err)
 	}
 	if got != "B" {
-		t.Fatalf("dial A echoed %q with A unhealthy, want B (rewrite/rewrite-failover not working; check intercept_port byte-order)", got)
+		t.Fatalf("dial A echoed %q with A unhealthy, want B (rewrite/rewrite-failover not working)", got)
 	}
 
 	// 3. Both unhealthy: BPF returns 0 → connect denied.

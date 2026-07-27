@@ -1,6 +1,5 @@
-# nodelocalproxy eBPF mode. Replace --bootstrap-intercept-address with the
-# apiserver host:port clients dial. On first start the daemon creates the
-# nodelocalproxy ConfigMap from default/kubernetes EndpointSlices.
+# nodelocalproxy eBPF mode. On first start the daemon creates the nodelocalproxy
+# ConfigMap from default/kubernetes EndpointSlices.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -27,8 +26,6 @@ spec:
       containers:
         - name: nodelocalproxy
           image: ghcr.io/funcx27/nodelocalproxy:latest
-          args:
-            - --bootstrap-intercept-address=apiserver.example.com:6443
           securityContext:
             runAsUser: 0
             runAsNonRoot: false
@@ -37,11 +34,11 @@ spec:
               # Fallback: use privileged: true if the runtime cannot grant these capabilities.
           resources:
             requests:
-              cpu: 50m
-              memory: 64Mi
+              cpu: 10m
+              memory: 32Mi
             limits:
-              cpu: 500m
-              memory: 256Mi
+              cpu: 100m
+              memory: 128Mi
           livenessProbe:
             exec:
               command: ["/nodelocalproxy", "status"]

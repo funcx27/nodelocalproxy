@@ -27,9 +27,9 @@ type Result struct {
 }
 
 // runIn is the testable core of a preflight run. It validates cgroup v2,
-// BTF presence, effective capabilities, backend/intercept port uniformity,
-// and kernel version against injected paths and process metadata.
-func runIn(cgroupRoot, btfRoot string, uid int, capEff uint64, backendPorts []uint16, interceptPort uint16) (*Result, error) {
+// BTF presence, effective capabilities, backend port validity, and kernel
+// version against injected paths and process metadata.
+func runIn(cgroupRoot, btfRoot string, uid int, capEff uint64, backendPorts []uint16) (*Result, error) {
 	if info, err := os.Stat(cgroupRoot); err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("preflight: cgroup root %s not a directory", cgroupRoot)
 	}
@@ -41,8 +41,8 @@ func runIn(cgroupRoot, btfRoot string, uid int, capEff uint64, backendPorts []ui
 		return nil, fmt.Errorf("preflight: BTF required (%s: %w)", btfFile, err)
 	}
 	for _, p := range backendPorts {
-		if p != interceptPort {
-			return nil, fmt.Errorf("preflight: all backend ports must equal intercept port %d", interceptPort)
+		if p == 0 {
+			return nil, fmt.Errorf("preflight: backend port must be positive")
 		}
 	}
 	release := unameRelease()
@@ -57,12 +57,12 @@ func runIn(cgroupRoot, btfRoot string, uid int, capEff uint64, backendPorts []ui
 
 // Run executes the preflight checks against the production cgroup/BTF paths
 // and the current effective uid.
-func Run(interceptPort uint16, backendPorts []uint16) (*Result, error) {
+func Run(backendPorts []uint16) (*Result, error) {
 	capEff, err := readCapEff("/proc/self/status")
 	if err != nil {
 		return nil, fmt.Errorf("preflight: read effective capabilities: %w", err)
 	}
-	return runIn(cgroupPath, btfPath, os.Geteuid(), capEff, backendPorts, interceptPort)
+	return runIn(cgroupPath, btfPath, os.Geteuid(), capEff, backendPorts)
 }
 
 func readCapEff(path string) (uint64, error) {

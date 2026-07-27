@@ -35,7 +35,6 @@ type Options struct {
 	ConfigMapNamespace string
 	ConfigMapName      string
 	ConfigMapKey       string
-	InterceptAddress   string
 }
 
 func LoadOrCreate(ctx context.Context, opts Options) (*config.Config, error) {
@@ -63,11 +62,8 @@ func loadOrCreate(ctx context.Context, clientset kubernetes.Interface, opts Opti
 	if !apierrors.IsNotFound(err) {
 		return nil, fmt.Errorf("get bootstrap configmap %s/%s: %w", opts.ConfigMapNamespace, opts.ConfigMapName, err)
 	}
-	if opts.InterceptAddress == "" {
-		return nil, fmt.Errorf("--bootstrap-intercept-address is required when configmap %s/%s does not exist", opts.ConfigMapNamespace, opts.ConfigMapName)
-	}
 
-	cfgYAML, err := generateConfigYAML(ctx, clientset, opts.InterceptAddress)
+	cfgYAML, err := generateConfigYAML(ctx, clientset)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +108,7 @@ func namespaceFromServiceAccount() string {
 	return strings.TrimSpace(string(data))
 }
 
-func generateConfigYAML(ctx context.Context, clientset kubernetes.Interface, interceptAddress string) (string, error) {
+func generateConfigYAML(ctx context.Context, clientset kubernetes.Interface) (string, error) {
 	slices, err := clientset.DiscoveryV1().EndpointSlices(kubernetesNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: discoveryv1.LabelServiceName + "=" + kubernetesService,
 	})
@@ -124,12 +120,10 @@ func generateConfigYAML(ctx context.Context, clientset kubernetes.Interface, int
 		return "", err
 	}
 	var doc struct {
-		Mode      string           `yaml:"mode"`
-		Intercept config.Intercept `yaml:"intercept"`
-		Backends  []string         `yaml:"backends"`
+		Mode     string   `yaml:"mode"`
+		Backends []string `yaml:"backends"`
 	}
 	doc.Mode = "ebpf-transparent"
-	doc.Intercept.Address = interceptAddress
 	doc.Backends = backends
 	data, err := yaml.Marshal(doc)
 	if err != nil {

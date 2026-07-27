@@ -30,7 +30,6 @@ const (
 	NlpMapSelfCgid        = "self_cgid"
 	NlpProgCgroupConnect4 = "cgroup_connect4"
 	NlpVarBackendCount    = "backend_count"
-	NlpVarInterceptPort   = "intercept_port"
 )
 
 // LoadNlp returns the embedded CollectionSpec for Nlp.
@@ -91,8 +90,7 @@ type NlpMapSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type NlpVariableSpecs struct {
-	BackendCount  *ebpf.VariableSpec `ebpf:"backend_count"`
-	InterceptPort *ebpf.VariableSpec `ebpf:"intercept_port"`
+	BackendCount *ebpf.VariableSpec `ebpf:"backend_count"`
 }
 
 // NlpObjects contains all objects after they have been loaded into the kernel.
@@ -132,8 +130,7 @@ func (m *NlpMaps) Close() error {
 //
 // It can be passed to LoadNlpObjects or ebpf.CollectionSpec.LoadAndAssign.
 type NlpVariables struct {
-	BackendCount  *ebpf.Variable `ebpf:"backend_count"`
-	InterceptPort *ebpf.Variable `ebpf:"intercept_port"`
+	BackendCount *ebpf.Variable `ebpf:"backend_count"`
 }
 
 // NlpPrograms contains all programs after they have been loaded into the kernel.

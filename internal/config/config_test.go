@@ -184,18 +184,9 @@ func TestModeDefaultsToUserspace(t *testing.T) {
 	}
 }
 
-func TestEbpfModeRequiresIntercept(t *testing.T) {
-	path := writeConfig(t, "mode: ebpf-transparent\nbackends: [\"192.168.100.20:6443\"]\n")
-	if _, err := LoadConfig(path); err == nil {
-		t.Fatal("expected intercept.address error, got nil")
-	}
-}
-
 func TestEbpfModeDoesNotRequireListen(t *testing.T) {
 	path := writeConfig(t, `
 mode: ebpf-transparent
-intercept:
-  address: apiserver.example.com:6443
 backends: ["192.168.100.20:6443"]
 `)
 	cfg, err := LoadConfig(path)
@@ -216,7 +207,7 @@ func TestBadModeRejected(t *testing.T) {
 
 func TestBackendCountLimit(t *testing.T) {
 	var lines []string
-	lines = append(lines, "mode: ebpf-transparent", "intercept:", "  address: a.example:6443", "backends:")
+	lines = append(lines, "mode: ebpf-transparent", "backends:")
 	for i := 0; i < 17; i++ {
 		lines = append(lines, fmt.Sprintf("  - 10.0.0.%d:6443", i))
 	}

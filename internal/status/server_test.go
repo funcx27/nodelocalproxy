@@ -104,18 +104,14 @@ func TestStatusHealthUserspaceMode(t *testing.T) {
 	srv.HandleHealth(rec, req)
 
 	var got struct {
-		Mode      string          `json:"mode"`
-		Intercept string          `json:"intercept"`
-		BPF       json.RawMessage `json:"bpf"`
+		Mode string          `json:"mode"`
+		BPF  json.RawMessage `json:"bpf"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if got.Mode != ModeUserspace {
 		t.Errorf("mode: got %q want %q", got.Mode, ModeUserspace)
-	}
-	if got.Intercept != "" {
-		t.Errorf("intercept: userspace must omit, got %q", got.Intercept)
 	}
 	if len(got.BPF) > 0 && string(got.BPF) != "null" {
 		t.Errorf("bpf: userspace must omit, got %s", got.BPF)
@@ -136,9 +132,7 @@ func TestStatusHealthEbpfClosureInjection(t *testing.T) {
 		Mode:        ModeEbpfTransparent,
 		EbpfStatus: func() *EbpfStatus {
 			return &EbpfStatus{
-				Intercept:     "0.0.0.0:16443",
-				InterceptPort: 16443,
-				Preflight:     pf,
+				Preflight: pf,
 				BPF: &BpfStatus{
 					Attached:         true,
 					AttachType:       "cgroup/connect4",
@@ -158,11 +152,9 @@ func TestStatusHealthEbpfClosureInjection(t *testing.T) {
 	srv.HandleHealth(rec, req)
 
 	var got struct {
-		Mode          string            `json:"mode"`
-		Intercept     string            `json:"intercept"`
-		InterceptPort int               `json:"interceptPort"`
-		Preflight     *preflight.Result `json:"preflight"`
-		BPF           *struct {
+		Mode      string            `json:"mode"`
+		Preflight *preflight.Result `json:"preflight"`
+		BPF       *struct {
 			Attached         bool      `json:"attached"`
 			AttachType       string    `json:"attachType"`
 			CgroupPath       string    `json:"cgroupPath"`
@@ -178,12 +170,6 @@ func TestStatusHealthEbpfClosureInjection(t *testing.T) {
 	}
 	if got.Mode != ModeEbpfTransparent {
 		t.Errorf("mode: got %q want %q", got.Mode, ModeEbpfTransparent)
-	}
-	if got.Intercept != "0.0.0.0:16443" {
-		t.Errorf("intercept: got %q", got.Intercept)
-	}
-	if got.InterceptPort != 16443 {
-		t.Errorf("interceptPort: got %d want 16443", got.InterceptPort)
 	}
 	if got.Preflight == nil || !got.Preflight.CgroupV2 {
 		t.Errorf("preflight: got %+v", got.Preflight)
@@ -223,18 +209,14 @@ func TestStatusHealthEbpfNilClosure(t *testing.T) {
 	srv.HandleHealth(rec, req)
 
 	var got struct {
-		Mode      string          `json:"mode"`
-		Intercept string          `json:"intercept"`
-		BPF       json.RawMessage `json:"bpf"`
+		Mode string          `json:"mode"`
+		BPF  json.RawMessage `json:"bpf"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if got.Mode != ModeEbpfTransparent {
 		t.Errorf("mode: got %q want %q", got.Mode, ModeEbpfTransparent)
-	}
-	if got.Intercept != "" {
-		t.Errorf("intercept: should be omitted, got %q", got.Intercept)
 	}
 	if len(got.BPF) > 0 && string(got.BPF) != "null" {
 		t.Errorf("bpf: should be omitted, got %s", got.BPF)
@@ -244,11 +226,9 @@ func TestStatusHealthEbpfNilClosure(t *testing.T) {
 func TestPrintHealthTableEbpf(t *testing.T) {
 	var buf strings.Builder
 	health := HealthResponse{
-		Status:        "ok",
-		Mode:          ModeEbpfTransparent,
-		Intercept:     "0.0.0.0:16443",
-		InterceptPort: 16443,
-		Preflight:     &preflight.Result{CgroupV2: true, Kernel: "5.15.0", BTF: true},
+		Status:    "ok",
+		Mode:      ModeEbpfTransparent,
+		Preflight: &preflight.Result{CgroupV2: true, Kernel: "5.15.0", BTF: true},
 		BPF: &BpfStatus{
 			Attached:       true,
 			AttachType:     "cgroup/connect4",
@@ -269,13 +249,16 @@ func TestPrintHealthTableEbpf(t *testing.T) {
 		t.Fatalf("printHealthTable: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"Mode: ebpf-transparent", "Intercept:", "BPF:", "attached=true", "Preflight:"} {
+	for _, want := range []string{"Mode: ebpf-transparent", "BPF:", "attached=true", "Preflight:"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\nGot:\n%s", want, out)
 		}
 	}
 	if strings.Contains(out, "Listen:") {
 		t.Errorf("ebpf mode must suppress Listen line\nGot:\n%s", out)
+	}
+	if strings.Contains(out, "Intercept:") {
+		t.Errorf("ebpf mode must suppress Intercept line\nGot:\n%s", out)
 	}
 	for _, hidden := range []string{"CONNECTIONS", "FAILS"} {
 		if strings.Contains(out, hidden) {

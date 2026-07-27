@@ -1,7 +1,7 @@
 # nodelocalproxy example config - eBPF transparent-connect mode.
 #
 # `mode` defaults to "userspace" (the Accept->Dial->io.Copy proxy). For
-# userspace, drop the `mode`/`intercept` lines and set `listen` + `backends`:
+# userspace, drop the `mode` line and set `listen` + `backends`:
 #   listen: 127.0.0.1:6443
 #   backends: [192.168.100.20:6443, ...]
 #
@@ -10,17 +10,9 @@
 # path. Requires root + cgroup v2 + kernel >= 5.4 + BTF (preflight enforces);
 # build with `make build`.
 #
-# intercept.address = the apiserver domain clients use (BPF matches `backends`,
-# NOT the domain; only the port is used). Each worker resolves this domain via
-# /etc/hosts or DNS to a control-plane IP listed in `backends`. Replace with your
-# cluster's actual apiserver domain + control-plane IPs.
-
 mode: ebpf-transparent
 
 listen: 127.0.0.1:6443  # userspace only; ignored by ebpf-transparent
-
-intercept:
-  address: apiserver.example.com:6443   # apiserver host:port clients dial; port must match backend ports
 
 backends:
   - 192.168.100.20:6443

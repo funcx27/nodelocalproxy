@@ -15,7 +15,7 @@ func TestLoadOrCreateReadsExistingConfigMap(t *testing.T) {
 	clientset := fake.NewSimpleClientset(&corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: DefaultConfigMapName, Namespace: DefaultConfigMapNamespace},
 		Data: map[string]string{
-			DefaultConfigMapKey: "mode: ebpf-transparent\nintercept:\n  address: apiserver.example.com:6443\nbackends: [\"10.0.0.1:6443\"]\n",
+			DefaultConfigMapKey: "mode: ebpf-transparent\nbackends: [\"10.0.0.1:6443\"]\n",
 		},
 	})
 
@@ -30,9 +30,8 @@ func TestLoadOrCreateReadsExistingConfigMap(t *testing.T) {
 
 func TestLoadOrCreateCreatesMissingConfigMapFromEndpoints(t *testing.T) {
 	clientset := fake.NewSimpleClientset(kubernetesEndpointSlice())
-	opts := Options{InterceptAddress: "apiserver.example.com:6443"}
 
-	cfg, err := loadOrCreate(context.Background(), clientset, opts.withDefaults())
+	cfg, err := loadOrCreate(context.Background(), clientset, Options{}.withDefaults())
 	if err != nil {
 		t.Fatalf("loadOrCreate: %v", err)
 	}
@@ -44,19 +43,8 @@ func TestLoadOrCreateCreatesMissingConfigMapFromEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get created configmap: %v", err)
 	}
-	if !strings.Contains(cm.Data[DefaultConfigMapKey], "apiserver.example.com:6443") {
-		t.Fatalf("created config missing intercept:\n%s", cm.Data[DefaultConfigMapKey])
-	}
-}
-
-func TestLoadOrCreateRequiresInterceptWhenConfigMapMissing(t *testing.T) {
-	clientset := fake.NewSimpleClientset(kubernetesEndpointSlice())
-	_, err := loadOrCreate(context.Background(), clientset, Options{}.withDefaults())
-	if err == nil {
-		t.Fatal("expected intercept error")
-	}
-	if !strings.Contains(err.Error(), "--bootstrap-intercept-address is required") {
-		t.Fatalf("unexpected error: %v", err)
+	if strings.Contains(cm.Data[DefaultConfigMapKey], "intercept:") {
+		t.Fatalf("created config should not contain intercept:\n%s", cm.Data[DefaultConfigMapKey])
 	}
 }
 

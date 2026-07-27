@@ -4,11 +4,17 @@ Per-node local TCP proxy with health-checked backend failover.
 
 ## What it does
 
-`nodelocalproxy` runs one instance per node, listens on a local address
-(typically `127.0.0.1:16443`), and forwards each connection to one of a pool of
-backends. Backend selection is round-robin over the **healthy** set; a
-`connect()` failure triggers immediate per-request failover to the next healthy
-backend.
+`nodelocalproxy` runs one instance per node and steers apiserver traffic to a
+healthy backend. It supports two modes:
+
+- `userspace`: listen on a local address (typically `127.0.0.1:16443`) and
+  forward TCP connections to healthy backends.
+- `ebpf-transparent`: attach a `cgroup/connect4` program and rewrite outbound
+  connects whose destination `IP:port` matches a configured backend.
+
+Backend selection is round-robin over the **healthy** set. In userspace mode, a
+backend `connect()` failure triggers immediate per-request failover to the next
+healthy backend.
 
 It is **generic** — the listen address, backend pool and health checks are
 driven entirely by a YAML config file. The primary use case is fronting
@@ -16,7 +22,7 @@ driven entirely by a YAML config file. The primary use case is fronting
 
 - each node runs one `nodelocalproxy`
 - `/etc/hosts` maps the control-plane endpoint hostname to `127.0.0.1`
-- the proxy load-balances across the control-plane nodes' apiservers
+- the proxy steers traffic across the control-plane nodes' apiservers
 - if one apiserver is down, connections fail over to another within a single
   request, without waiting for the next health-check cycle
 
@@ -105,7 +111,8 @@ unsupported nodes.
 `make ebpf-generate` refreshes the checked-in bpf2go artifacts
 (`internal/ebpf/nlp_bpfel.go`, `nlp_bpfel.o`). It needs clang, llvm-strip,
 bpftool, and a BTF-capable kernel. `headers/vmlinux.h` is generated locally and
-is not committed.
+is not committed. Docker image builds use the checked-in artifacts and do not
+install clang, llvm, or bpftool.
 
 ```sh
 make build           # one binary supporting userspace + ebpf-transparent
@@ -118,9 +125,6 @@ make ebpf-vmlinux    # regenerate vmlinux.h only (when targeting a different ker
 ```yaml
 mode: ebpf-transparent
 
-intercept:
-  address: apiserver.example.com:6443
-
 status: unix:///run/nodelocalproxy/status.sock
 
 backends:
@@ -132,15 +136,9 @@ backends:
 ### How matching works
 
 The BPF hook fires on `connect()`, where the destination has already been
-resolved to an IP — it cannot see the domain. So:
-
-- `intercept.address` is the apiserver **domain** the client actually dials. It
-  is used for port extraction and display only.
-- The BPF matches when `dst IP:port ∈ backends` (and `dst port ==
-  intercept.address`'s port). Each worker node may resolve the apiserver domain
-  to a different control-plane IP via local `/etc/hosts` or DNS; as long as the
-  resolved IP:port appears in `backends`, the connect is intercepted and
-  rewritten to a healthy backend.
+resolved to an IP. It cannot see the domain. The BPF matches only when the
+socket destination `IP:port` is one of the configured `backends`; that matched
+connection is rewritten to a healthy backend.
 
 ### TLS / cert SAN
 
@@ -160,14 +158,12 @@ domain — i.e. the node's configured control-plane IP, which must itself be
 reachable. While the daemon is attached and all backends are unhealthy, the
 connect is **denied** (no fallthrough) — see below.
 
-### `rejectOnAllUnhealthy` is deny-only in MVP
+### All-unhealthy behavior
 
 When every backend is unhealthy, the BPF rejects the connect (`return 0`),
-causing `connect()` to fail with `EACCES`. The configurable
-`rejectOnAllUnhealthy=false` fallthrough path is **not** implemented in the
-current MVP; the behavior is effectively always deny. This is intentional for
-the first release and documented as a known limitation. If you need degraded
-fallthrough, run in `userspace` mode until the runtime-tunable is added.
+causing `connect()` to fail with `EACCES`. There is no degraded fallthrough knob
+in eBPF mode today. If you need fallback to the originally resolved endpoint
+when all backends are unhealthy, use `userspace` mode.
 
 ### Deploy
 
@@ -185,16 +181,16 @@ GitHub Actions publishes multi-arch images to GHCR:
 ghcr.io/funcx27/nodelocalproxy
 ```
 
-Version tags:
+Image tags:
 
-- Git tag `v0.1.0`: `v0.1.0`, `latest`
+- Git tag `vX.Y.Z`: `vX.Y.Z`, `latest`
 - Pull requests: build only, no push
 
 Release a version:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 Run:
@@ -207,16 +203,11 @@ Inside Kubernetes, omitting `--config` enables bootstrap mode. The daemon reads
 the `nodelocalproxy` ConfigMap in its own namespace (or `kube-system` if the pod
 namespace cannot be detected). If the ConfigMap does not exist, it reads
 `default` EndpointSlices labeled `kubernetes.io/service-name=kubernetes`,
-creates a config from the ready IPv4 addresses, and continues with that
-generated config:
-
-```sh
-./nodelocalproxy --bootstrap-intercept-address apiserver.example.com:6443
-```
+creates a config from the ready IPv4 `IP:port` entries, and continues with that
+generated config.
 
 Bootstrap creation requires RBAC for `configmaps get/create` in the daemon
-namespace and `endpointslices list` in `default`. Once the ConfigMap exists,
-`--bootstrap-intercept-address` is not required.
+namespace and `endpointslices list` in `default`.
 
 Status defaults to a Unix socket. The parent directory is created
 automatically:
@@ -236,7 +227,8 @@ The same status can be queried with the built-in command, without requiring
 ./nodelocalproxy status
 ```
 
-It prints a short summary and backend table by default:
+It prints a short summary and backend table by default. Userspace mode includes
+listener and connection counters:
 
 ```text
 Status: OK
@@ -249,6 +241,21 @@ Health check: http /readyz, interval 3s, timeout 1s, thresholds fail=2 success=1
 ADDRESS        HEALTH  CONNECTIONS  LAST_CHECK                 LAST_SUCCESS  ERROR
 10.0.0.1:6443  OK      1/72/0      2026-07-14T15:04:05+08:00  0s                -
 10.0.0.2:6443  OK      1/56/0      2026-07-14T15:04:05+08:00  0s                -
+```
+
+eBPF mode hides userspace-only listener and connection counters:
+
+```text
+Status: OK
+Mode: ebpf-transparent
+BPF: attached=true attachType=cgroup/connect4 cgroup=/sys/fs/cgroup selfExempt=true matchMode=backends mapSize=16 lastSync=2026-07-27T14:25:19+08:00
+Preflight: cgroupV2=true kernel=6.8.0 btf=true capabilities=true
+Uptime: 54s
+Backend connect timeout: 300ms
+Health check: http /readyz, interval 3s, timeout 1s, thresholds fail=2 success=1
+
+ADDRESS              HEALTH  LAST_CHECK                 LAST_SUCCESS  ERROR
+172.16.100.101:6443  OK      2026-07-27T14:25:19+08:00  1s            -
 ```
 
 By default the command uses the built-in Unix status endpoint:

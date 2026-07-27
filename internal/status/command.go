@@ -135,11 +135,6 @@ func printHealthTable(w io.Writer, health HealthResponse) error {
 	}
 	isEbpf := mode == ModeEbpfTransparent
 	if isEbpf {
-		if health.Intercept != "" {
-			if _, err := fmt.Fprintf(w, "Intercept: %s\n", formatIntercept(health.Intercept, health.InterceptPort)); err != nil {
-				return err
-			}
-		}
 		if health.BPF != nil {
 			if _, err := fmt.Fprintf(w, "BPF: attached=%t attachType=%s cgroup=%s selfExempt=%t matchMode=%s mapSize=%d lastSync=%s%s\n",
 				health.BPF.Attached,
@@ -247,13 +242,6 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func formatIntercept(addr string, port int) string {
-	if port > 0 {
-		return fmt.Sprintf("%s (port %d)", addr, port)
-	}
-	return addr
 }
 
 func formatSyncErr(err string) string {
