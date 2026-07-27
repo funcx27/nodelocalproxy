@@ -206,15 +206,16 @@ Run:
 Inside Kubernetes, omitting `--config` enables bootstrap mode. The daemon reads
 the `nodelocalproxy` ConfigMap in its own namespace (or `kube-system` if the pod
 namespace cannot be detected). If the ConfigMap does not exist, it reads
-`default/kubernetes` Endpoints, creates a config from the ready IPv4 addresses,
-and continues with that generated config:
+`default` EndpointSlices labeled `kubernetes.io/service-name=kubernetes`,
+creates a config from the ready IPv4 addresses, and continues with that
+generated config:
 
 ```sh
 ./nodelocalproxy --bootstrap-intercept-address apiserver.example.com:6443
 ```
 
 Bootstrap creation requires RBAC for `configmaps get/create` in the daemon
-namespace and `endpoints get` in `default`. Once the ConfigMap exists,
+namespace and `endpointslices list` in `default`. Once the ConfigMap exists,
 `--bootstrap-intercept-address` is not required.
 
 Status defaults to a Unix socket. The parent directory is created

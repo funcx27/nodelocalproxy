@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -26,6 +27,7 @@ const (
 
 	kubernetesNamespace = "default"
 	kubernetesEndpoint  = "kubernetes"
+	kubernetesService   = "kubernetes"
 	serviceAccountNS    = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 )
 
@@ -75,7 +77,7 @@ func loadOrCreate(ctx context.Context, clientset kubernetes.Interface, opts Opti
 			Namespace: opts.ConfigMapNamespace,
 			Annotations: map[string]string{
 				"nodelocalproxy.io/generated": "true",
-				"nodelocalproxy.io/source":    "default/kubernetes endpoints",
+				"nodelocalproxy.io/source":    "default/kubernetes endpointslices",
 			},
 		},
 		Data: map[string]string{opts.ConfigMapKey: cfgYAML},
@@ -111,11 +113,13 @@ func namespaceFromServiceAccount() string {
 }
 
 func generateConfigYAML(ctx context.Context, clientset kubernetes.Interface, interceptAddress string) (string, error) {
-	ep, err := clientset.CoreV1().Endpoints(kubernetesNamespace).Get(ctx, kubernetesEndpoint, metav1.GetOptions{})
+	slices, err := clientset.DiscoveryV1().EndpointSlices(kubernetesNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: discoveryv1.LabelServiceName + "=" + kubernetesService,
+	})
 	if err != nil {
-		return "", fmt.Errorf("get %s/%s endpoints: %w", kubernetesNamespace, kubernetesEndpoint, err)
+		return "", fmt.Errorf("list %s/%s endpointslices: %w", kubernetesNamespace, kubernetesEndpoint, err)
 	}
-	backends, err := backendsFromEndpoints(ep)
+	backends, err := backendsFromEndpointSlices(slices.Items)
 	if err != nil {
 		return "", err
 	}
@@ -134,23 +138,28 @@ func generateConfigYAML(ctx context.Context, clientset kubernetes.Interface, int
 	return string(data), nil
 }
 
-func backendsFromEndpoints(ep *corev1.Endpoints) ([]string, error) {
+func backendsFromEndpointSlices(slices []discoveryv1.EndpointSlice) ([]string, error) {
 	seen := make(map[string]struct{})
-	for _, subset := range ep.Subsets {
-		port, ok := endpointPort(subset.Ports)
+	for _, slice := range slices {
+		port, ok := endpointSlicePort(slice.Ports)
 		if !ok {
 			continue
 		}
-		for _, addr := range subset.Addresses {
-			ip := net.ParseIP(addr.IP).To4()
-			if ip == nil {
+		for _, endpoint := range slice.Endpoints {
+			if endpoint.Conditions.Ready != nil && !*endpoint.Conditions.Ready {
 				continue
 			}
-			seen[net.JoinHostPort(ip.String(), strconv.Itoa(int(port)))] = struct{}{}
+			for _, addr := range endpoint.Addresses {
+				ip := net.ParseIP(addr).To4()
+				if ip == nil {
+					continue
+				}
+				seen[net.JoinHostPort(ip.String(), strconv.Itoa(int(port)))] = struct{}{}
+			}
 		}
 	}
 	if len(seen) == 0 {
-		return nil, fmt.Errorf("no ready IPv4 backends found in %s/%s endpoints", kubernetesNamespace, kubernetesEndpoint)
+		return nil, fmt.Errorf("no ready IPv4 backends found in %s/%s endpointslices", kubernetesNamespace, kubernetesEndpoint)
 	}
 	out := make([]string, 0, len(seen))
 	for backend := range seen {
@@ -160,20 +169,20 @@ func backendsFromEndpoints(ep *corev1.Endpoints) ([]string, error) {
 	return out, nil
 }
 
-func endpointPort(ports []corev1.EndpointPort) (int32, bool) {
+func endpointSlicePort(ports []discoveryv1.EndpointPort) (int32, bool) {
 	for _, port := range ports {
-		if port.Name == "https" && port.Port > 0 {
-			return port.Port, true
+		if port.Name != nil && *port.Name == "https" && port.Port != nil && *port.Port > 0 {
+			return *port.Port, true
 		}
 	}
 	for _, port := range ports {
-		if port.Port == 6443 {
-			return port.Port, true
+		if port.Port != nil && *port.Port == 6443 {
+			return *port.Port, true
 		}
 	}
 	for _, port := range ports {
-		if port.Port > 0 {
-			return port.Port, true
+		if port.Port != nil && *port.Port > 0 {
+			return *port.Port, true
 		}
 	}
 	return 0, false

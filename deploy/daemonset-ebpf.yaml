@@ -1,6 +1,6 @@
 # nodelocalproxy eBPF mode. Replace --bootstrap-intercept-address with the
 # apiserver host:port clients dial. On first start the daemon creates the
-# nodelocalproxy ConfigMap from default/kubernetes Endpoints.
+# nodelocalproxy ConfigMap from default/kubernetes EndpointSlices.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -35,6 +35,13 @@ spec:
             capabilities:
               add: [BPF, NET_ADMIN, SYS_ADMIN]
               # Fallback: use privileged: true if the runtime cannot grant these capabilities.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
           livenessProbe:
             exec:
               command: ["/nodelocalproxy", "status"]
@@ -97,10 +104,9 @@ metadata:
   name: nodelocalproxy-discovery
   namespace: default
 rules:
-  - apiGroups: [""]
-    resources: ["endpoints"]
-    resourceNames: ["kubernetes"]
-    verbs: ["get"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

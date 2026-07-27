@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -28,7 +29,7 @@ func TestLoadOrCreateReadsExistingConfigMap(t *testing.T) {
 }
 
 func TestLoadOrCreateCreatesMissingConfigMapFromEndpoints(t *testing.T) {
-	clientset := fake.NewSimpleClientset(kubernetesEndpoints())
+	clientset := fake.NewSimpleClientset(kubernetesEndpointSlice())
 	opts := Options{InterceptAddress: "apiserver.example.com:6443"}
 
 	cfg, err := loadOrCreate(context.Background(), clientset, opts.withDefaults())
@@ -49,7 +50,7 @@ func TestLoadOrCreateCreatesMissingConfigMapFromEndpoints(t *testing.T) {
 }
 
 func TestLoadOrCreateRequiresInterceptWhenConfigMapMissing(t *testing.T) {
-	clientset := fake.NewSimpleClientset(kubernetesEndpoints())
+	clientset := fake.NewSimpleClientset(kubernetesEndpointSlice())
 	_, err := loadOrCreate(context.Background(), clientset, Options{}.withDefaults())
 	if err == nil {
 		t.Fatal("expected intercept error")
@@ -59,18 +60,27 @@ func TestLoadOrCreateRequiresInterceptWhenConfigMapMissing(t *testing.T) {
 	}
 }
 
-func kubernetesEndpoints() *corev1.Endpoints {
-	return &corev1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{Name: kubernetesEndpoint, Namespace: kubernetesNamespace},
-		Subsets: []corev1.EndpointSubset{
+func kubernetesEndpointSlice() *discoveryv1.EndpointSlice {
+	ready := true
+	notReady := false
+	name := "https"
+	port := int32(6443)
+	return &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      kubernetesEndpoint,
+			Namespace: kubernetesNamespace,
+			Labels:    map[string]string{discoveryv1.LabelServiceName: kubernetesService},
+		},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Ports:       []discoveryv1.EndpointPort{{Name: &name, Port: &port}},
+		Endpoints: []discoveryv1.Endpoint{
 			{
-				Addresses: []corev1.EndpointAddress{
-					{IP: "10.0.0.2"},
-					{IP: "10.0.0.1"},
-					{IP: "2001:db8::1"},
-				},
-				NotReadyAddresses: []corev1.EndpointAddress{{IP: "10.0.0.3"}},
-				Ports:             []corev1.EndpointPort{{Name: "https", Port: 6443}},
+				Addresses:  []string{"10.0.0.2", "10.0.0.1", "2001:db8::1"},
+				Conditions: discoveryv1.EndpointConditions{Ready: &ready},
+			},
+			{
+				Addresses:  []string{"10.0.0.3"},
+				Conditions: discoveryv1.EndpointConditions{Ready: &notReady},
 			},
 		},
 	}
